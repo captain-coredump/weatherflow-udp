@@ -1,0 +1,11 @@
+weatherflow-udp
+Copyright 2017 Arthur Emerson, vreihen@yahoo.com
+Distributed under terms of the GPLv3
+
+This is a driver for weewx, that captures data from the WeatherFlow bridge via
+the bridge's UDP broadcasts on the local subnet.
+
+Currently only tested with the WeatherFlow "Air" sensor array, since the "Sky"
+is not available for testing yet as of 9/5/2017.
+
+
