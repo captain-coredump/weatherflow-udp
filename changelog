@@ -1,8 +1,14 @@
-0.10  2017-09-05
+0.10  2017-09-05 by Arthur Emerson, vreihen@yahoo.com
 * Initial release
 * Does NOT look at Air serial number, so it will blindly report ANY obs_air packet from any associated Air sensor arrays.
 * Sky packets are developed from API documentation, not tested.  Unsure if rainfall is mm, or cumulative vs. observation period.
 
 API documentation link from WeatherFlow:
 https://weatherflow.github.io/SmartWeather/api/udp.html
+
+0.30  2017-12-03 by Arthur Emerson, vreihen@yahoo.com
+* Cleaned up Sky support, based on published API clarifications.
+* (Note that rainfall in each packet is total since last packet, not storm/daily total.)
+* Still does NOT look at Air/Sky device serial numbers, so it blindly reports ANY obs_air and obs_sky packets.
+* Note that this 0.30 code has been running continuously on my Raspberry Pi in a test weewx instance with no problems/crashes observed.
 
