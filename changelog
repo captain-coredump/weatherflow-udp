@@ -8,7 +8,7 @@ https://weatherflow.github.io/SmartWeather/api/udp.html
 
 0.30  2017-12-03 by Arthur Emerson, vreihen@yahoo.com
 * Cleaned up Sky support, based on published API clarifications.
-* (Note that rainfall in each packet is total since last packet, not storm/daily total.)
+* (Note that rainfall in each packet is total since last packet, not storm/daily total. weewx likes it this way :-) and no need to delta.)
 * Still does NOT look at Air/Sky device serial numbers, so it blindly reports ANY obs_air and obs_sky packets.
-* Note that this 0.30 code has been running continuously on my Raspberry Pi in a test weewx instance with no problems/crashes observed.
+* Note that this 0.30 code has been running continuously on my Raspberry Pi for over a month in a test weewx instance with no problems/crashes observed.
 
