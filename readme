@@ -8,4 +8,22 @@ the bridge's UDP broadcasts on the local subnet.
 Currently only tested with the WeatherFlow "Air" sensor array, since the "Sky"
 is not available for testing yet as of 9/5/2017.
 
+I believe that I have correctly followed the instructions provided by weewx
+in order to provide the complete weewx extension package layout here.
+
+https://github.com/weewx/weewx/wiki/extensions#how-to-install-an-extension
+
+Installation should be as simple as grabbing a .ZIP download of this
+entire project from the GitHub web interface, and then running this
+command:
+
+wee_extension --install weatherflow-udp-version-X.Y.zip
+
+Worst case, a manual install is simple enough.  At least on my Raspberry Pi,
+copy weatherflowudp.py from bin/user to /usr/share/weewx/user/weatherflowudp.py,
+and then edit /etc/weewx/weewx.conf and add the new station driver settings
+per the above file.
+
+Please let me know if I made a mistake with the packaging.  I am not a weewx
+expert, and do not claim to be a programmer or more than a casual user of GitHub.
 
