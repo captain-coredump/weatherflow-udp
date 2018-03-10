@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2017 Arthur Emerson, vreihen@yahoo.com
+# Copyright 2017-2018 Arthur Emerson, vreihen@yahoo.com
 # Distributed under the terms of the GNU Public License (GPLv3)
 
 """
@@ -19,20 +19,112 @@ stanza.  For example:
 
 [WeatherFlowUDP]
     driver = user.weatherflowudp
+    log_raw_packets = False
+    udp_address = <broadcast>
+    # udp_address = 0.0.0.0
+    # udp_address = 255.255.255.255
+    udp_port = 50222
+    udp_timeout = 90
+
     [[sensor_map]]
-        outTemp = temperature.AR-00004424.obs_air
-        rain = rain.SK-00001234.obs_sky
+        outTemp = air_temperature.AR-00004424.obs_air
+        outHumidity = relative_humidity.AR-00004424.obs_air
+        pressure =  station_pressure.AR-00004424.obs_air
+        # lightning_strikes =  lightning_strike_count.AR-00004424.obs_air
+        # avg_distance =  lightning_strike_avg_distance.AR-00004424.obs_air
+        outTempBatteryStatus =  battery.AR-00004424.obs_air
+        windSpeed = wind_speed.SK-00001234.rapid_wind
+        windDir = wind_direction.SK-00001234.rapid_wind
+        # lux = illuminance.SK-00001234.obs_sky
+        UV = uv.SK-00001234.obs_sky
+        rain = rain_accumulated.SK-00001234.obs_sky
+        windBatteryStatus = battery.SK-00001234.obs_sky
+        radiation = solar_radiation.SK-00001234.obs_sky
+        # lightningYYY = distance.AR-00004424.evt_strike
+        # lightningZZZ = energy.AR-00004424.evt_strike
 
 If no sensor_map is specified, no data will be collected.
 
-To identify sensors, run the driver directly.  Alternatively, use the options
-log_unknown_sensors and log_unmapped_sensors to see data from the local
-network that are not yet recognized by your configuration.
+To identify sensors, use the option 'log_raw_packets = True' to
+output all raw received packets into syslog where you can examine
+what is being sent.  Make sure to set 'log_raw_packets = False'
+when done, since it will generate a LOT of syslog entries over
+time.
 
-[WeatherFlowUDP]
-    driver = user.weatherflowudp
+To identify the various observation_name options, start weewx
+with this station driver installed and it will write the
+entire matrix of available observation_names and sensor_types
+to syslog or wherever weewx is configured to send log info.
 
-The default for each of these is False.
+Apologies for the long observation_names, but I figured that
+it would be best if I used the documented field names from
+WeatherFlow's UDP packet specs (v37 at the time of writing) 
+with underscores between words so that the names were
+consistent with their protocol documentation.  See
+https://weatherflow.github.io/SmartWeather/api/udp.html
+
+Options:
+
+    log_raw_packets = False
+
+    Enable writing all raw UDP packets received to syslog,
+    or wherever weewx is configured to send log info.  Will
+    fill up your logs pretty quickly, so only use it as
+    a debugging tool or to identify sensors.
+     
+    udp_address = <broadcast>
+    # udp_address = 0.0.0.0
+    # udp_address = 255.255.255.255
+
+    This is the broadcast address that we should be listening
+    on for packets.  If the driver throws an error on start,
+    try one of the other commented-out options (in order).
+    This seems to be platform-specific.  All three work on
+    Debian Linux and my Raspberry Pi, but only 0.0.0.0 works
+    on my Macbook running OS-X or MacOS.  Don't ask about
+    Windows, since I don't have a test platform to see
+    if it will even work.
+
+    udp_port = 50222
+
+    The IP port that we should be listening for UDP packets
+    from.  WeatherFlow's default is 50222.
+
+    udp_timeout = 90
+
+    The number of seconds that we should wait for an incoming
+    packet on the UDP socket before we give up and log an
+    error into syslog.  I cannot determine whether or not
+    weewx cares whether a station driver is non-blocking or
+    blocking, but encountered a situation in testing where
+    the WeatherFlow Hub rebooted for a firmware update and
+    it caused the driver to throw a timeout error and exit.
+    I have no idea what the default timeout value even is, but
+    decided to make it configurable in case it is important
+    to someone else.  My default of 90 seconds seems reasonable,
+    with the Air sending observations every 60 seconds.  If
+    you are an old-school programmer like me who thinks that
+    computers should wait forever until they receive data,
+    the Python value "None" should disable the timeout.  In
+    any case, the driver will just log an error into syslog
+    and keep on processing.  It isn't like it is the end
+    of the world if you pick a wrong value, but you may have
+    a better chance of missing packets during the brief error
+    trapping time with a really short duration.
+
+Finally, let me add a thank you to Matthew Wall for the
+sensor map naming logic that I borrowed from his weewx-SDR
+station driver code: 
+
+https://github.com/matthewwall/weewx-sdr
+
+I guess that I should also thank David St. John and the
+"dream team" at WeatherFlow for all of the hard work and
+forethought that they put into making this weather station
+a reality.  I can't sing enough praises for whoever came
+up with the idea to send observation packets out live via
+UDP broadcasts, and think that they should be nominated
+for a Nobel Prize or something...
 
 """
 
@@ -44,8 +136,9 @@ import weedb
 import weeutil.weeutil
 import weewx.drivers
 import weewx.wxformulas
-# from weeutil.weeutil import tobool
+from weeutil.weeutil import tobool
 import syslog
+import threading
 
 import sys, getopt
 from socket import *
@@ -53,179 +146,136 @@ import json
 from collections import namedtuple
 import datetime
 
-
 # Default settings...
-DRIVER_VERSION = "0.3"
+DRIVER_VERSION = "1.00"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
-UDP_ADDRESS = '255.255.255.255'
-UDP_PORT = 50222
+
+# Observation record fields...
+fields = dict()
+fields['obs_air'] = ('time_epoch', 'station_pressure', 'air_temperature', 'relative_humidity', 'lightning_strike_count', 'lightning_strike_avg_distance', 'battery', 'report_interval')
+fields['obs_sky'] = ('time_epoch', 'illuminance', 'uv', 'rain_accumulated', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'battery', 'report_interval', 'solar_radiation', 'local_day_rain_accumulation', 'precipitation_type', 'wind_sample_interval')
+fields['rapid_wind'] = ('time_epoch', 'wind_speed', 'wind_direction')
+fields['evt_precip'] = ('time_epoch')
+fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 
 def loader(config_dict, engine):
     return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME])
 
-# argv = sys.argv[1:]
-# 
-# # Parse command line options...
-# try:
-#    opts, args = getopt.getopt(argv,"hi:p:",["ip=","port=","help"])
-# except getopt.GetoptError:
-#    print sys.argv[0], '[--ip <listen_ip_address>] [--port <udp_port>] [-h]'
-#    sys.exit(2)
-# for opt, arg in opts:
-#    if opt in ("-h", "--help"):
-#       print sys.argv[0], '[--ip <listen_ip_address>] [--port <udp_port>] [-h]'
-#       sys.exit()
-#    elif opt in ("-i", "--ip"):
-#       UDP_ADDRESS = arg
-#    elif opt in ("-p", "--port"):
-#       UDP_PORT = int(arg)
-# print 'Listening for UDP broadcasts to IP address',UDP_ADDRESS,'on port',UDP_PORT,'...'
+def logmsg(level, msg):
+    syslog.syslog(level, 'weatherflowudp: %s: %s' %
+                  (threading.currentThread().getName(), msg))
+
+def logdbg(msg):
+    logmsg(syslog.LOG_DEBUG, msg)
+
+def loginf(msg):
+    logmsg(syslog.LOG_INFO, msg)
+
+def logerr(msg):
+    logmsg(syslog.LOG_ERR, msg)
+
+def sendMyLoopPacket(pkt,sensor_map):
+    packet = dict()
+    if 'time_epoch' in pkt:
+        packet = {'dateTime': pkt['time_epoch'],
+            # weewx.METRICWX = mm/mps ; weewx.METRIC = cm/kph
+            'usUnits' : weewx.METRICWX}
+
+    for pkt_weewx, pkt_label in sensor_map.iteritems():
+        if pkt_label.replace("-","_") in pkt:
+           packet[pkt_weewx] = pkt[pkt_label.replace("-","_")]
+
+    return packet
+
+def parseUDPPacket(pkt):
+    packet = dict()
+    if 'serial_number' in pkt:
+        if 'type' in pkt:
+            serial_number = pkt['serial_number'].replace("-","_")
+            pkt_type = pkt['type']
+            pkt_label = serial_number + "." + pkt_type
+            pkt_keys = pkt.keys()
+            for i in pkt_keys:
+                pkt_item = i + "." + pkt_label
+                packet[pkt_item] = pkt[i]
+
+            if pkt_type == 'obs_air':
+                packet['time_epoch'] = pkt['obs'][0][0]
+                for i1, obs_val in enumerate(pkt['obs'][0]):
+                    pkt_item1 =  fields['obs_air'][i1] + "." + pkt_label
+                    packet[pkt_item1] = obs_val
+
+            if pkt_type == 'obs_sky':
+                packet['time_epoch'] = pkt['obs'][0][0]
+                for i1, obs_val in enumerate(pkt['obs'][0]):
+                    pkt_item1 =  fields['obs_sky'][i1] + "." + pkt_label
+                    packet[pkt_item1] = obs_val
+
+            if pkt_type == 'rapid_wind':
+                packet['time_epoch'] = pkt['ob'][0]
+                for i1, obs_val in enumerate(pkt['ob']):
+                    pkt_item1 =  fields['rapid_wind'][i1] + "." + pkt_label
+                    packet[pkt_item1] = obs_val
+
+            if pkt_type == 'evt_strike':
+                packet['time_epoch'] = pkt['evt'][0]
+                for i1, obs_val in enumerate(pkt['evt']):
+                    pkt_item1 =  fields['evt_strike'][i1] + "." + pkt_label
+                    packet[pkt_item1] = obs_val
+
+            if pkt_type == 'evt_precip':
+                packet['time_epoch'] = pkt['evt'][0]
+                for i1, obs_val in enumerate(pkt['evt']):
+                    pkt_item1 =  fields['evt_precip'][i1] + "." + pkt_label
+                    packet[pkt_item1] = obs_val
+        else:
+            loginf('Corrupt UDP packet? %s' % pkt)
+    else:
+        loginf('Corrupt UDP packet? %s' % pkt)
+    return packet
+
 
 class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
-    # map the counter total to the counter delta.  for example, the pair
-    #   rain:rainTotal
-    # will result in a delta called 'rain' from the cumulative 'rainTotal'.
-    # these are applied to mapped packets.
-    #DEFAULT_DELTAS = {
-    #    'rain': 'rainTotal',
-    #    'strikes': 'strikes_total'}
-
     def __init__(self, **stn_dict):
-        last_obs_time_air = 0
-        last_obs_time_sky = 0
-        last_obs_rapid_wind = 0
-        last_obs_rain = 0
-        # loginf('driver version is %s' % DRIVER_VERSION)
+        loginf('driver version is %s' % DRIVER_VERSION)
+        self._log_raw_packets = tobool(stn_dict.get('log_raw_packets', False))
+        self._udp_address = stn_dict.get('udp_address', '<broadcast>')
+        self._udp_port = int(stn_dict.get('udp_port', 50222))
+        self._udp_timeout = int(stn_dict.get('udp_timeout', 90))
         self._sensor_map = stn_dict.get('sensor_map', {})
-        # loginf('sensor map is %s' % self._sensor_map)
-        ## print 'sensor map is ', self._sensor_map
-        ## sensor map is  {'outTemp': 'temperature.AR-00004424.obs_air', 'outHumidity': 'humidity.AR-00004424.obs_air'}
-        #self._deltas = stn_dict.get('deltas', WeatherFlowUDPDriver.DEFAULT_DELTAS)
-        # loginf('deltas is %s' % self._deltas)
+        loginf('sensor map is %s' % self._sensor_map)
+        loginf('*** Sensor names per packet type')
+        for pkt_type in fields.keys():
+            loginf('packet %s: %s' % (pkt_type,fields[pkt_type]))
 
     def hardware_name(self):
         return HARDWARE_NAME
 
-    def genLoopPackets(self):
-        last_obs_time_air = 0
-        last_obs_time_sky = 0
-        last_obs_rapid_wind = 0
-        last_obs_rain = 0
 
-        udp_socket = socket(AF_INET, SOCK_DGRAM)
-        udp_socket.settimeout(None)
-        udp_socket.bind((UDP_ADDRESS,UDP_PORT))
+    def genLoopPackets(self):
+        loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s...' % (self._udp_address,self._udp_port,self._udp_timeout))
+
+        s=socket(AF_INET, SOCK_DGRAM)
+        s.bind((self._udp_address,self._udp_port))
+        s.settimeout(self._udp_timeout)
 
         while True:
-            udp_raw = udp_socket.recvfrom(1024)
-            # print udp_packet[0]
-            udp_packet = json.loads(udp_raw[0], object_hook=lambda d: namedtuple('X', d.keys())(*d.values()))
-
-            # print udp_packet
-
-
-            if udp_packet.type == "obs_air":  # This is an Air barometer/temp/humidity/lightning packet
-                # {"serial_number":"AR-00004424","type":"obs_air","obs":[[1502287861,1009.30,21.90,85,0,0,3.46,1]],"firmware_revision":17}
-                #
-                # Index  Field                          Units
-                #   0    Time Epoch                     Seconds
-                #   1    Station Pressure               MB
-                #   2    Air Temperature                C
-                #   3    Relative Humidity              %
-                #   4    Lightning Strike Count
-                #   5    Lightning Strike Avg Distance  km
-                #   6    Battery                        V
-                #   7    Report Interval                Minutes
-
-                # print 'Air packet received!'
-                # Air apparently sends two packets - last minute and current minute.  This if clause
-                #   is a crude attempt to not send duplicate loop packets if we saw the
-                #   last minute's packet already...
-                if last_obs_time_air != udp_packet.obs[0][0]:
-                    # print 'Latest packet!'
-                    # _packet = {'dateTime': int(time.mktime(raw_time)),
-                    _packet = {'dateTime': udp_packet.obs[0][0],
-                        'usUnits' : weewx.METRIC,
-                        'outTemp' : udp_packet.obs[0][2],
-                        'outHumidity' : udp_packet.obs[0][3],
-                        'pressure' : udp_packet.obs[0][1]
-                        }
-                    yield _packet
-                    last_obs_time_air = udp_packet.obs[0][0]
-                    
-            if udp_packet.type == "obs_sky":  # This is a Sky wind/rain/solar packet
-                # {"serial_number":"SK-00001234","type":"obs_sky","hub_sn":"HB-00001357","obs":[[1509404073,null,0,0.000,0.09,0.50,0.94,230,3.37,1,0]],"firmware_revision":27}
-                #
-                # Index  Field                          Units
-                #   0    Time Epoch                     Seconds
-                #   1    Lux
-                #   2    UV                             Index 1-10
-                #   3    Precip Accumulated
-                #   4    Wind Lull                      mps
-                #   5    Wind Avg                       mps
-                #   6    Wind Gust                      mps
-                #   7    Wind Direction                 Degrees
-                #   8    Battery
-                #   9    Report Interval                Minutes
-                #  10    Solar Radiation
-
-                # print 'Sky packet received!'
-                # XYZ apparently sends two packets - last minute and current minute.  This if clause
-                #   is a crude attempt to not send duplicate loop packets if we saw the
-                #   last minute's packet already...
-                if last_obs_time_sky != udp_packet.obs[0][0]:
-                    # print 'Latest packet!'
-                    # _packet = {'dateTime': int(time.mktime(raw_time)),
-                    _packet = {'dateTime': udp_packet.obs[0][0],
-                        # weewx.METRICWX = mm/mps ; weewx.METRIC = cm/kph
-                        'usUnits' : weewx.METRICWX,
-                        'windDir' : udp_packet.obs[0][7],
-                        'windSpeed' : udp_packet.obs[0][5],
-                        'windGust' : udp_packet.obs[0][6],
-                        # Rain may need to be delta value since last loop packet?
-                        #'rainTotal' : udp_packet.obs[0][3],
-                        'rain' : udp_packet.obs[0][3],
-                        #'rain' : udp_packet.obs[0][3] - last_obs_rain,
-                        'UV' : udp_packet.obs[0][2],
-                        'radiation' : udp_packet.obs[0][10]
-                        }
-                    yield _packet
-                    last_obs_time_sky = udp_packet.obs[0][0]
-                    last_obs_rain = udp_packet.obs[0][3]
+            timeouterr=0
+            try:
+                m=s.recvfrom(1024)
+            except timeout:
+                timeouterr=1
+                logerr('Socket timeout waiting for incoming UDP packet!')
+            if timeouterr == 0:
+                m0 = m[0].replace(",null",",None")
+                m1=eval(m0)
+                if self._log_raw_packets:
+                    loginf('raw packet: %s' % m1)
+                m2=parseUDPPacket(m1)
+                m3=sendMyLoopPacket(m2, self._sensor_map)
+                if len(m3) > 2:
+                    yield m3
 
 
-            if udp_packet.type == "rapid_wind":  # This is a Sky near-realtime wind packet (sent rapidly, not just once per minute)
-                # {"serial_number":"SK-00001234","type":"rapid_wind","hub_sn":"HB-00001357","ob":[1509408513,1.07,159]}
-                #
-                # Index  Field                          Units
-                #   0    Time Epoch                     Seconds
-                #   1    Wind Speed (instantaneous?)    mps
-                #   2    Wind Direction                 Degrees
-
-                # SKY apparently sends two packets - last minute and current minute.  This if clause
-                #   is a crude attempt to not send duplicate loop packets if we saw the
-                #   last minute's packet already...
-                if last_obs_rapid_wind != udp_packet.ob[0]:
-                    # print 'Latest packet!'
-                    # _packet = {'dateTime': int(time.mktime(raw_time)),
-                    _packet = {'dateTime': udp_packet.ob[0],
-                        # weewx.METRICWX = mm/mps ; weewx.METRIC = cm/kph
-                        'usUnits' : weewx.METRICWX,
-                        'windSpeed' : udp_packet.ob[1],
-                        'windDir' : udp_packet.ob[2]
-                        }
-                    yield _packet
-                    last_obs_rapid_wind = udp_packet.ob[0]
-
-                    
-
-# {"serial_number":"AR-00004424","type":"station_status","timestamp":1502287861,"uptime":10989664,"voltage":3.46,"version":17,"rssi":-62,"sensor_status":0}
-# {"serial_number":"AR-00004424","type":"obs_air","obs":[[1502287861,1009.30,21.90,85,0,0,3.46,1]],"firmware_revision":17}
-# {"serial_number":"HB-00001357","type":"hub-status","firmware_version":"13","uptime":105945,"rssi":-53,"timestamp":1502287902}
-# {"serial_number":"SK-00001234","type":"station_status","hub_sn":"HB-00001357","timestamp":1509404073,"uptime":2532,"voltage":3.37,"version":27,"rssi":-41,"sensor_status":0}
-# {"serial_number":"SK-00001234","type":"obs_sky","hub_sn":"HB-00001357","obs":[[1509404073,null,0,0.000,0.09,0.50,0.94,230,3.37,1,0]],"firmware_revision":27}
-# {"serial_number":"SK-00001234","type":"rapid_wind","hub_sn":"HB-00001357","ob":[1509408513,1.07,159]}
-# {"serial_number":"SK-00001234","type":"light_debug","hub_sn":"HB-00001357","ob":[1509408516,0,0,1,0]}
-# {"serial_number":"SK-00001234","type":"wind_debug","hub_sn":"HB-00001357","ob":[1509408516,40,212,0,0,1655,1628,1767,1775,1733,1737,1793,1814]}

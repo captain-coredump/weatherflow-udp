@@ -1,0 +1,8 @@
+2018-03-10:
+
+* Still need to extend weewx database for storing lightning data.
+
+* Would be nice to figure out a way to utilize the real-time lightning strike packets with weewx.
+
+* Find out if this code can receive packets on Windows platforms.
+

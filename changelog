@@ -1,3 +1,19 @@
+1.00  2018-03-10 by Arthur Emerson, vreihen@yahoo.com
+* Scrapped just about everything below and started over more or less from scratch.
+* Multiple sensors and a sensor_map facility based on mwall's weewx-SDR syntax finally added.
+* Did I mention that it is imperative that you edit your weewx.conf file and add the needed sensor_map definitions, or else weewx will collect/log NOTHING?  The readme file is worth a read.
+* As far as I know, *every* sensor reading and item is passed up to weewx, with the exception of certain debugging packets that are not documented and being sent for WeatherFlow's developers to troubleshoot.
+* Current as of the Hub firmware v35 protocol API documentation, tested against v37 with no identified issues.
+* I have accomplished everything that I originally set out to develop, with the exception of extending the weewx database to store lightning data.  Thus, this has been committed as a true v1.00 and is labeled as the master branch.  Consider all older versions deprecated.
+
+
+0.30  2017-12-03 by Arthur Emerson, vreihen@yahoo.com
+* Cleaned up Sky support, based on published API clarifications.
+* (Note that rainfall in each packet is total since last packet, not storm/daily total. weewx likes it this way :-) and no need to delta.)
+* Still does NOT look at Air/Sky device serial numbers, so it blindly reports ANY obs_air and obs_sky packets.
+* Note that this 0.30 code has been running continuously on my Raspberry Pi for over a month in a test weewx instance with no problems/crashes observed.
+
+
 0.10  2017-09-05 by Arthur Emerson, vreihen@yahoo.com
 * Initial release
 * Does NOT look at Air serial number, so it will blindly report ANY obs_air packet from any associated Air sensor arrays.
@@ -5,10 +21,4 @@
 
 API documentation link from WeatherFlow:
 https://weatherflow.github.io/SmartWeather/api/udp.html
-
-0.30  2017-12-03 by Arthur Emerson, vreihen@yahoo.com
-* Cleaned up Sky support, based on published API clarifications.
-* (Note that rainfall in each packet is total since last packet, not storm/daily total. weewx likes it this way :-) and no need to delta.)
-* Still does NOT look at Air/Sky device serial numbers, so it blindly reports ANY obs_air and obs_sky packets.
-* Note that this 0.30 code has been running continuously on my Raspberry Pi for over a month in a test weewx instance with no problems/crashes observed.
 
