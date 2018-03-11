@@ -147,7 +147,7 @@ from collections import namedtuple
 import datetime
 
 # Default settings...
-DRIVER_VERSION = "1.00"
+DRIVER_VERSION = "1.01"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
 
