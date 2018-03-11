@@ -71,7 +71,7 @@ Options:
     or wherever weewx is configured to send log info.  Will
     fill up your logs pretty quickly, so only use it as
     a debugging tool or to identify sensors.
-     
+
     udp_address = <broadcast>
     # udp_address = 0.0.0.0
     # udp_address = 255.255.255.255
@@ -229,6 +229,13 @@ def parseUDPPacket(pkt):
                 for i1, obs_val in enumerate(pkt['evt']):
                     pkt_item1 =  fields['evt_precip'][i1] + "." + pkt_label
                     packet[pkt_item1] = obs_val
+
+            if pkt_type == 'device_status':
+                packet['time_epoch'] = pkt['timestamp']
+
+            if pkt_type == 'hub_status':
+                packet['time_epoch'] = pkt['timestamp']
+
         else:
             loginf('Corrupt UDP packet? %s' % pkt)
     else:

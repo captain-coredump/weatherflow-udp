@@ -1,3 +1,7 @@
+1.01  2018-03-11 by Arthur Emerson, vreihen@yahoo.com
+* Realized that I forgot to include support for device_status and hub_status packets.  (Thanks eric @ WF support forum for making me double-check my work!)  You can now map rssi signal strengths, device uptimes, and other values that only a geek would get excited about into a weewx field, based on a sensor_map entry.
+
+
 1.00  2018-03-10 by Arthur Emerson, vreihen@yahoo.com
 * Scrapped just about everything below and started over more or less from scratch.
 * Multiple sensors and a sensor_map facility based on mwall's weewx-SDR syntax finally added.
