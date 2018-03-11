@@ -147,7 +147,7 @@ from collections import namedtuple
 import datetime
 
 # Default settings...
-DRIVER_VERSION = "1.01"
+DRIVER_VERSION = "1.02"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
 
@@ -235,6 +235,9 @@ def parseUDPPacket(pkt):
 
             if pkt_type == 'hub_status':
                 packet['time_epoch'] = pkt['timestamp']
+
+            if pkt_type[0:2] == 'X_':
+                packet['time_epoch'] = int(time.time())
 
         else:
             loginf('Corrupt UDP packet? %s' % pkt)

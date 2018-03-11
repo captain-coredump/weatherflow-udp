@@ -1,3 +1,7 @@
+1.02  2018-03-11 by Arthur Emerson, vreihen@yahoo.com
+* Added support for user-defined protocol extension packets.  Any JSON packet received where "type" starts with "X_" will have the current time stamped on it and its contents forwarded to weewx per the sensor_map definitions.  Why?  Because WeatherFlow does not make a snow depth sensor, and let's just say that I have an Arduino sketch open in another window that will ultimately make use of this.  Feel free to create your own home collection of evil IoT devices reporting back to weewx! :-)
+
+
 1.01  2018-03-11 by Arthur Emerson, vreihen@yahoo.com
 * Realized that I forgot to include support for device_status and hub_status packets.  (Thanks eric @ WF support forum for making me double-check my work!)  You can now map rssi signal strengths, device uptimes, and other values that only a geek would get excited about into a weewx field, based on a sensor_map entry.
 
