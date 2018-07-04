@@ -25,6 +25,7 @@ stanza.  For example:
     # udp_address = 255.255.255.255
     udp_port = 50222
     udp_timeout = 90
+    share_socket = True
 
     [[sensor_map]]
         outTemp = air_temperature.AR-00004424.obs_air
@@ -112,6 +113,15 @@ Options:
     a better chance of missing packets during the brief error
     trapping time with a really short duration.
 
+    share_socket = False
+
+    Whether or not the UDP socket should be shared with other
+    local programs also listening for WeatherFlow packets.  Default
+    is False because I suspect that some obscure Python implementation
+    will have problems sharing the socket.  Feel free to set it to
+    True if you have other apps running on your weewx host listening
+    for WF UDP packets.
+
 Finally, let me add a thank you to Matthew Wall for the
 sensor map naming logic that I borrowed from his weewx-SDR
 station driver code: 
@@ -147,7 +157,7 @@ from collections import namedtuple
 import datetime
 
 # Default settings...
-DRIVER_VERSION = "1.02"
+DRIVER_VERSION = "1.03"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
 
@@ -254,6 +264,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._udp_address = stn_dict.get('udp_address', '<broadcast>')
         self._udp_port = int(stn_dict.get('udp_port', 50222))
         self._udp_timeout = int(stn_dict.get('udp_timeout', 90))
+        self._share_socket = tobool(stn_dict.get('share_socket', False))
         self._sensor_map = stn_dict.get('sensor_map', {})
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
@@ -265,9 +276,11 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
 
     def genLoopPackets(self):
-        loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s...' % (self._udp_address,self._udp_port,self._udp_timeout))
+        loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s and share_socket %s...' % (self._udp_address,self._udp_port,self._udp_timeout,self._share_socket))
 
-        s=socket(AF_INET, SOCK_DGRAM)
+        s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        if self._share_socket == True:
+            s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         s.bind((self._udp_address,self._udp_port))
         s.settimeout(self._udp_timeout)
 
@@ -280,7 +293,11 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 logerr('Socket timeout waiting for incoming UDP packet!')
             if timeouterr == 0:
                 m0 = m[0].replace(",null",",None")
-                m1=eval(m0)
+                m1=''
+                try:
+                    m1=eval(m0)
+                except SyntaxError:
+                    logerr('Packet parse error: %s' % m0)
                 if self._log_raw_packets:
                     loginf('raw packet: %s' % m1)
                 m2=parseUDPPacket(m1)

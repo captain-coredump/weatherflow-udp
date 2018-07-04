@@ -6,3 +6,8 @@
 
 * Find out if this code can receive packets on Windows platforms.
 
+2018-06-22:
+
+* Should implement support for weewx's station configuration feature, with a dialog to build a basic sensor_map during the installation process.
+
+

@@ -1,3 +1,8 @@
+1.03  2018-07-02 by Arthur Emerson, vreihen@yahoo.com
+* Added support to share the open UDP port with other local programs, and made it a configurable option via share_socket = True in weewx.conf.  Made it configurable in case there is a Python implementation that doesn't share the port nicely.  Thanks to Ross for making the suggestion and providing a few sample lines, and thanks to @MechEng70 for verifying that the shared socket code works on his computer with another app sharing the port.
+* Additional error handling to detect bad/short UDP packets, and handle them more gracefully than a SyntaxError during the eval process.  If the eval fails, the received packet is now sent to syslog via logerr.  Thanks to WF Forum user pswired for catching this!
+
+
 1.02  2018-03-11 by Arthur Emerson, vreihen@yahoo.com
 * Added support for user-defined protocol extension packets.  Any JSON packet received where "type" starts with "X_" will have the current time stamped on it and its contents forwarded to weewx per the sensor_map definitions.  Why?  Because WeatherFlow does not make a snow depth sensor, and let's just say that I have an Arduino sketch open in another window that will ultimately make use of this.  Feel free to create your own home collection of evil IoT devices reporting back to weewx! :-)
 

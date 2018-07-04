@@ -21,6 +21,10 @@ copy weatherflowudp.py from bin/user to /usr/share/weewx/user/weatherflowudp.py,
 and then edit /etc/weewx/weewx.conf and add the new station driver settings
 per the info below.
 
+(If you are starting with a fresh weewx installation, choose the "Simulator"
+station driver during the package install process.  The wee_extension command
+above will replace the simulator station driver with this one.)
+
 Please let me know if I made a mistake with the packaging.  I am not a weewx
 expert, and do not claim to be a programmer or more than a casual user of
 GitHub.
@@ -51,6 +55,7 @@ stanza in your weewx.conf file.  For example:
     # udp_address = 255.255.255.255
     udp_port = 50222
     udp_timeout = 90
+    share_socket = False
 
     [[sensor_map]]
         outTemp = air_temperature.AR-00004444.obs_air
@@ -137,6 +142,16 @@ Options:
     of the world if you pick a wrong value, but you may have
     a better chance of missing packets during the brief error
     trapping time with a really short duration.
+
+    share_socket = False
+
+    Whether or not the UDP socket should be shared with other
+    local programs also listening for WeatherFlow packets.  Default
+    is False because I suspect that some obscure Python implementation
+    will have problems sharing the socket.  Feel free to set it to
+    True if you have other apps running on your weewx host listening
+    for WF UDP packets.
+
 
 Finally, let me add a thank you to Matthew Wall for the sensor map naming
 logic that I borrowed from his weewx-SDR station driver code: 
