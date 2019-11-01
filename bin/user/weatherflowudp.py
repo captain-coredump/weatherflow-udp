@@ -192,7 +192,7 @@ def sendMyLoopPacket(pkt,sensor_map):
             # weewx.METRICWX = mm/mps ; weewx.METRIC = cm/kph
             'usUnits' : weewx.METRICWX}
 
-    for pkt_weewx, pkt_label in sensor_map.iteritems():
+    for pkt_weewx, pkt_label in list(sensor_map.items()):
         if pkt_label.replace("-","_") in pkt:
            packet[pkt_weewx] = pkt[pkt_label.replace("-","_")]
 
@@ -205,7 +205,7 @@ def parseUDPPacket(pkt):
             serial_number = pkt['serial_number'].replace("-","_")
             pkt_type = pkt['type']
             pkt_label = serial_number + "." + pkt_type
-            pkt_keys = pkt.keys()
+            pkt_keys = list(pkt.keys())
             for i in pkt_keys:
                 pkt_item = i + "." + pkt_label
                 packet[pkt_item] = pkt[i]
@@ -268,7 +268,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._sensor_map = stn_dict.get('sensor_map', {})
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
-        for pkt_type in fields.keys():
+        for pkt_type in list(fields.keys()):
             loginf('packet %s: %s' % (pkt_type,fields[pkt_type]))
 
     def hardware_name(self):
@@ -292,7 +292,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 timeouterr=1
                 logerr('Socket timeout waiting for incoming UDP packet!')
             if timeouterr == 0:
-                m0 = m[0].replace(",null",",None")
+                #m0 = m[0].replace(",null",",None")
+                m0 = str(m[0],'utf-8').replace(",null",",None")
                 m1=''
                 try:
                     m1=eval(m0)
