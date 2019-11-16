@@ -292,8 +292,10 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 timeouterr=1
                 logerr('Socket timeout waiting for incoming UDP packet!')
             if timeouterr == 0:
-                #m0 = m[0].replace(",null",",None")
-                m0 = str(m[0],'utf-8').replace(",null",",None")
+                try:
+                    m0 = str(m[0],'utf-8').replace(",null",",None")    # python3
+                except:
+                    m0 = m[0].replace(",null",",None")                 # python2
                 m1=''
                 try:
                     m1=eval(m0)
