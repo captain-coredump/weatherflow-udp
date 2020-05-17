@@ -10,4 +10,18 @@
 
 * Should implement support for weewx's station configuration feature, with a dialog to build a basic sensor_map during the installation process.
 
+2019-01-28:
+
+* Need to add syslog alert and graceful exit on startup if sensor_map is null/missing.
+
+2019-11-15:
+
+* (DONE!) Need to test WF forum user vinceskahan's Python 3 patches against WeeWX 3.x on Python 2 and WeeWX 4.x on Python 3.
+
+* (DONE!) Need to add support for new WeatherFlow Tempest all-in-one sensor currently on Kickstarter campaign, as soon as the API for any new packet types has been published.
+
+2020-05-09:
+
+* Need to automatically detect running Python version.  As of this driver v1.10, it is hard-coded for WeeWX 4.x and Python 3. (See the changelog for three lines to edit for running under Python 2.)
+
 

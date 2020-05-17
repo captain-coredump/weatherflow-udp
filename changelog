@@ -1,3 +1,15 @@
+1.10 2020-05-09 by Arthur Emerson, vreihen@yahoo.com
+* IMPORTANT!  This release is set up for WeeWX 4.x and Python 3.  If you want it to run on Python 2, swap the comments in bin/user/weatheflowudp.py on lines 200/201, 214/215, and 284/285.  (I'll get around to making the detection of Python version automatic in the next update.)
+* Added official Tempest UDP support now that API has been officially published.
+* Note that I have decided after a weekend's debate to deviate slightly from the published Tempest API doc's naming of the rain field. WeatherFlow changed it from the rain_accumulated used on the Sky to precip_accumulated on the Tempest.  I'm going to continue to use rain_accumulated for the Tempest obs_st packets, to hopefully save sensor_map-rewriting grief in the future as Air/Sky owners upgrade to the new Tempest hardware.
+
+
+1.04  2019-11-24 by Arthur Emerson, vreihen@yahoo.com (unpublished pre-release field test Tempest driver shared by email)
+* Applied patches submitted by WF Forum user vinceskahan for WeeWX 4.x and Python 3 support.
+* Added place holders for the future WeatherFlow Tempest all-in-one sensor's new obs packet type, in anticipation of the API being published in the next few weeks.  Hopefully they didn't drift too far from the obs_air and obs_sky packet layouts!
+* IMPORTANT!  This release is set up for WeeWX 4.x and Python 3.  If you want it to run on Python 2, swap the comments in bin/user/weatheflowudp.py on lines 200/201, 214/215, and 284/285.  (I'll get around to making the detection of Python version automatic in the next update.)
+
+
 1.03  2018-07-02 by Arthur Emerson, vreihen@yahoo.com
 * Added support to share the open UDP port with other local programs, and made it a configurable option via share_socket = True in weewx.conf.  Made it configurable in case there is a Python implementation that doesn't share the port nicely.  Thanks to Ross for making the suggestion and providing a few sample lines, and thanks to @MechEng70 for verifying that the shared socket code works on his computer with another app sharing the port.
 * Additional error handling to detect bad/short UDP packets, and handle them more gracefully than a SyntaxError during the eval process.  If the eval fails, the received packet is now sent to syslog via logerr.  Thanks to WF Forum user pswired for catching this!

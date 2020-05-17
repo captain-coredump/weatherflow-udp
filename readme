@@ -1,5 +1,5 @@
 weatherflow-udp
-Copyright 2017-2018 Arthur Emerson, vreihen@yahoo.com
+Copyright 2017-2020 Arthur Emerson, vreihen@yahoo.com
 Distributed under terms of the GPLv3
 
 This is a driver for weewx, that captures data from the WeatherFlow bridge
@@ -45,7 +45,7 @@ and the packet type, separated by periods:
   <observation_name>.<hardware_id>.<packet_type>
 
 The filter and data types are specified in a sensor_map stanza in the driver
-stanza in your weewx.conf file.  For example:
+stanza in your weewx.conf file.  For example, on an Air/Sky setup:
 
 [WeatherFlowUDP]
     driver = user.weatherflowudp
@@ -75,6 +75,10 @@ stanza in your weewx.conf file.  For example:
         # lightningZZZ = energy.AR-00004444.evt_strike
 
 ==> If no sensor_map is specified, no data will be collected! <==
+
+For a sample Tempest sensor_map, see the file sample_Tempest_sensor_map on GitHub:
+
+https://github.com/captain-coredump/weatherflow-udp/blob/master/sample_Tempest_sensor_map
 
 To identify sensors, use the option 'log_raw_packets = True' to
 output all raw received packets into syslog where you can examine
