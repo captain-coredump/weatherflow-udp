@@ -80,11 +80,12 @@ For a sample Tempest sensor_map, see the file sample_Tempest_sensor_map on GitHu
 
 https://github.com/captain-coredump/weatherflow-udp/blob/master/sample_Tempest_sensor_map
 
-To identify sensors, use the option 'log_raw_packets = True' to
-output all raw received packets into syslog where you can examine
-what is being sent.  Make sure to set 'log_raw_packets = False'
-when done, since it will generate a LOT of syslog entries over
-time.
+To identify sensors, run the driver directly. For example:
+  cd /home/weewx
+  PYTHONPATH=/home/weewx/bin python ./bin/user/weatherflowudp.py
+
+To see the various options that are available when running the driver directly:
+  PYTHONPATH=/home/weewx/bin python ./bin/user/weatherflowudp.py --help
 
 To identify the various observation_name options, start weewx
 with this station driver installed and it will write the
