@@ -152,8 +152,6 @@ import weewx.drivers
 import weewx.wxformulas
 from weeutil.weeutil import tobool
 
-PY3 = sys.version_info[0] == 3
-
 # Default settings...
 DRIVER_VERSION = "1.11"
 HARDWARE_NAME = "WeatherFlow"
@@ -313,13 +311,16 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 except timeout:
                     logerr('Socket timeout waiting for incoming UDP packet!')
                 else:
-                    if PY3:
-                        # Python 3 requires conversion from bytes to string
-                        m0 = m0.decode('utf-8')
-                    m1 = json.loads(m0)
-                    if self._log_raw_packets:
-                        loginf('raw packet: %s' % m1)
-                    yield m1
+                    # Decode the JSON. Some base stations have emitted datagrams that are not pure UTF-8, so
+                    # be prepared to catch the exception.
+                    try:
+                        m1 = json.loads(m0)
+                    except UnicodeDecodeError:
+                        loginf("Unable to decode packet %s" % m0)
+                    else:
+                        if self._log_raw_packets:
+                            loginf('raw packet: %s' % m1)
+                        yield m1
         finally:
             sock.close()
 
