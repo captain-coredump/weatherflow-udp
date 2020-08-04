@@ -2,7 +2,7 @@
 # Copyright 2017-2020 Arthur Emerson, vreihen@yahoo.com
 # Distributed under the terms of the GNU Public License (GPLv3)
 
-from setup import ExtensionInstaller
+from weecfg.extension import ExtensionInstaller
 
 def loader():
     return WeatherFlowUDPInstaller()
@@ -10,7 +10,7 @@ def loader():
 class WeatherFlowUDPInstaller(ExtensionInstaller):
     def __init__(self):
         super(WeatherFlowUDPInstaller, self).__init__(
-            version="1.10",
+            version="1.11",
             name='weatherflowudp',
             description='Capture data from WeatherFlow Bridge via UDP broadcast packets',
             author="Arthur Emerson",

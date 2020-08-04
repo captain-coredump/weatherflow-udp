@@ -4,8 +4,8 @@
         outTemp = air_temperature.ST-00000025.obs_st
         outHumidity = relative_humidity.ST-00000025.obs_st
         pressure = station_pressure.ST-00000025.obs_st
-        #lightning_strikes =  lightning_strike_count.ST-00000025.obs_st
-        #avg_distance =  lightning_strike_avg_distance.ST-00000025.obs_st
+        lightning_strike_count =  lightning_strike_count.ST-00000025.obs_st
+        lightning_distance =  lightning_strike_avg_distance.ST-00000025.obs_st
         outTempBatteryStatus = battery.ST-00000025.obs_st
         windSpeed = wind_speed.ST-00000025.rapid_wind
         windDir = wind_direction.ST-00000025.rapid_wind
@@ -14,7 +14,5 @@
         rain = rain_accumulated.ST-00000025.obs_st
         windBatteryStatus = battery.ST-00000025.obs_st
         radiation = solar_radiation.ST-00000025.obs_st
-        #lightningXXX = distance.ST-00000025.evt_strike
-        #lightningYYY = energy.ST-00000025.evt_strike
 
 

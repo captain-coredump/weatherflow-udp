@@ -1,3 +1,12 @@
+1.11 2020-07-16 by Tom Keffer, tkeffer@gmail.com
+* Ported to Python 2 (as well as Python 3).
+* Ported to WeeWX V3.x (as well as V4.x).
+* Fixed an insecure approach to decoding packets.
+* Made the driver a bit closer to the standard WeeWX style. In particular, you can now run it directly.
+* Closed the socket port after use.
+* More Pythonic style.
+
+
 1.10 2020-05-09 by Arthur Emerson, vreihen@yahoo.com
 * IMPORTANT!  This release is set up for WeeWX 4.x and Python 3.  If you want it to run on Python 2, swap the comments in bin/user/weatheflowudp.py on lines 200/201, 214/215, and 284/285.  (I'll get around to making the detection of Python version automatic in the next update.)
 * Added official Tempest UDP support now that API has been officially published.

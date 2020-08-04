@@ -50,11 +50,9 @@ For a sample Tempest sensor_map, see the file sample_Tempest_sensor_map on GitHu
 
 https://github.com/captain-coredump/weatherflow-udp/blob/master/sample_Tempest_sensor_map
 
-To identify sensors, use the option 'log_raw_packets = True' to
-output all raw received packets into syslog where you can examine
-what is being sent.  Make sure to set 'log_raw_packets = False'
-when done, since it will generate a LOT of syslog entries over
-time.
+To identify sensors, run the driver directly. For help on the various options, try
+  cd /home/weewx
+  PYTHONPATH=/home/weewx/bin python ./bin/user/weatherflowudp.py --help
 
 To identify the various observation_name options, start weewx
 with this station driver installed and it will write the
@@ -143,62 +141,84 @@ for a Nobel Prize or something...
 """
 
 from __future__ import with_statement
-import math
+import json
 import time
+
+import sys
+from socket import *
+
 import weewx.units
-import weedb
-import weeutil.weeutil
 import weewx.drivers
 import weewx.wxformulas
 from weeutil.weeutil import tobool
-import syslog
-import threading
-
-import sys, getopt
-from socket import *
-import json
-from collections import namedtuple
-import datetime
 
 # Default settings...
-DRIVER_VERSION = "1.10"
+DRIVER_VERSION = "1.11"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
+
+try:
+    # Test for new-style weewx logging by trying to import weeutil.logger
+    import weeutil.logger
+    import logging
+
+    log = logging.getLogger(__name__)
+
+
+    def logdbg(msg):
+        log.debug(msg)
+
+
+    def loginf(msg):
+        log.info(msg)
+
+
+    def logerr(msg):
+        log.error(msg)
+
+except ImportError:
+    # Old-style weewx logging
+    import syslog
+
+
+    def logmsg(level, msg):
+        syslog.syslog(level, 'weatherflowudp: %s:' % msg)
+
+
+    def logdbg(msg):
+        logmsg(syslog.LOG_DEBUG, msg)
+
+
+    def loginf(msg):
+        logmsg(syslog.LOG_INFO, msg)
+
+
+    def logerr(msg):
+        logmsg(syslog.LOG_ERR, msg)
+
 
 # Observation record fields...
 fields = dict()
 fields['obs_air'] = ('time_epoch', 'station_pressure', 'air_temperature', 'relative_humidity', 'lightning_strike_count', 'lightning_strike_avg_distance', 'battery', 'report_interval')
 fields['obs_sky'] = ('time_epoch', 'illuminance', 'uv', 'rain_accumulated', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'battery', 'report_interval', 'solar_radiation', 'local_day_rain_accumulation', 'precipitation_type', 'wind_sample_interval')
 fields['rapid_wind'] = ('time_epoch', 'wind_speed', 'wind_direction')
-fields['evt_precip'] = ('time_epoch')
+fields['evt_precip'] = ('time_epoch',)
 fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'wind_sample_interval', 'station_pressure', 'air_temperature', 'relative_humidity', 'illuminance', 'uv', 'solar_radiation', 'rain_accumulated', 'precipitation_type', 'lightning_strike_avg_distance', 'lightning_strike_count', 'battery', 'report_interval')
 
 def loader(config_dict, engine):
     return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME])
 
-def logmsg(level, msg):
-    syslog.syslog(level, 'weatherflowudp: %s: %s' %
-                  (threading.currentThread().getName(), msg))
-
-def logdbg(msg):
-    logmsg(syslog.LOG_DEBUG, msg)
-
-def loginf(msg):
-    logmsg(syslog.LOG_INFO, msg)
-
-def logerr(msg):
-    logmsg(syslog.LOG_ERR, msg)
 
 def sendMyLoopPacket(pkt,sensor_map):
     packet = dict()
     if 'time_epoch' in pkt:
-        packet = {'dateTime': pkt['time_epoch'],
-            # weewx.METRICWX = mm/mps ; weewx.METRIC = cm/kph
-            'usUnits' : weewx.METRICWX}
+        packet = {
+            'dateTime': pkt['time_epoch'],
+            'usUnits' : weewx.METRICWX
+        }
 
-    #for pkt_weewx, pkt_label in sensor_map.iteritems():     # Python 2
-    for pkt_weewx, pkt_label in list(sensor_map.items()):    # Python 3
+    for pkt_weewx, pkt_label in sensor_map.items():
         if pkt_label.replace("-","_") in pkt:
            packet[pkt_weewx] = pkt[pkt_label.replace("-","_")]
 
@@ -209,58 +229,36 @@ def parseUDPPacket(pkt):
     if 'serial_number' in pkt:
         if 'type' in pkt:
             serial_number = pkt['serial_number'].replace("-","_")
-            pkt_type = pkt['type']
-            pkt_label = serial_number + "." + pkt_type
-            #pkt_keys = pkt.keys()         # Python 2
-            pkt_keys = list(pkt.keys())    # Python 3
-            for i in pkt_keys:
-                pkt_item = i + "." + pkt_label
-                packet[pkt_item] = pkt[i]
+            pkt_label = serial_number + "." + pkt['type']
+            for key in pkt:
+                packet[key + "." + pkt_label] = pkt[key]
 
-            if pkt_type == 'obs_air':
+            if pkt['type'] in ('obs_air', 'obs_sky', 'obs_st'):
                 packet['time_epoch'] = pkt['obs'][0][0]
-                for i1, obs_val in enumerate(pkt['obs'][0]):
-                    pkt_item1 =  fields['obs_air'][i1] + "." + pkt_label
-                    packet[pkt_item1] = obs_val
+                for key, value in zip(fields[pkt['type']], pkt['obs'][0]):
+                    packet[key + "." + pkt_label] = value
 
-            if pkt_type == 'obs_sky':
-                packet['time_epoch'] = pkt['obs'][0][0]
-                for i1, obs_val in enumerate(pkt['obs'][0]):
-                    pkt_item1 =  fields['obs_sky'][i1] + "." + pkt_label
-                    packet[pkt_item1] = obs_val
-
-            if pkt_type == 'obs_st':
-                packet['time_epoch'] = pkt['obs'][0][0]
-                for i1, obs_val in enumerate(pkt['obs'][0]):
-                    pkt_item1 =  fields['obs_st'][i1] + "." + pkt_label
-                    packet[pkt_item1] = obs_val
-
-            if pkt_type == 'rapid_wind':
+            elif pkt['type'] == 'rapid_wind':
                 packet['time_epoch'] = pkt['ob'][0]
-                for i1, obs_val in enumerate(pkt['ob']):
-                    pkt_item1 =  fields['rapid_wind'][i1] + "." + pkt_label
-                    packet[pkt_item1] = obs_val
+                for key, value in zip(fields['rapid_wind'], pkt['ob']):
+                    packet[key + "." + pkt_label] = value
 
-            if pkt_type == 'evt_strike':
+            elif pkt['type'] in ('evt_strike', 'evt_precip'):
                 packet['time_epoch'] = pkt['evt'][0]
-                for i1, obs_val in enumerate(pkt['evt']):
-                    pkt_item1 =  fields['evt_strike'][i1] + "." + pkt_label
-                    packet[pkt_item1] = obs_val
+                for key, value in zip(fields[pkt['type']], pkt['evt']):
+                    packet[key + "." + pkt_label] = value
 
-            if pkt_type == 'evt_precip':
-                packet['time_epoch'] = pkt['evt'][0]
-                for i1, obs_val in enumerate(pkt['evt']):
-                    pkt_item1 =  fields['evt_precip'][i1] + "." + pkt_label
-                    packet[pkt_item1] = obs_val
-
-            if pkt_type == 'device_status':
+            elif pkt['type'] == 'device_status':
                 packet['time_epoch'] = pkt['timestamp']
 
-            if pkt_type == 'hub_status':
+            elif pkt['type'] == 'hub_status':
                 packet['time_epoch'] = pkt['timestamp']
 
-            if pkt_type[0:2] == 'X_':
+            elif pkt['type'][0:2] == 'X_':
                 packet['time_epoch'] = int(time.time())
+
+            else:
+                logerr("Unknown packet type: '%s'" % pkt['type'])
 
         else:
             loginf('Corrupt UDP packet? %s' % pkt)
@@ -281,45 +279,104 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._sensor_map = stn_dict.get('sensor_map', {})
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
-        #for pkt_type in fields.keys():                  # Python 2
-        for pkt_type in list(fields.keys()):             # Python 3
+
+        for pkt_type in fields:
             loginf('packet %s: %s' % (pkt_type,fields[pkt_type]))
 
     def hardware_name(self):
         return HARDWARE_NAME
 
-
     def genLoopPackets(self):
-        loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s and share_socket %s...' % (self._udp_address,self._udp_port,self._udp_timeout,self._share_socket))
+        for udp_packet in self.gen_udp_packets():
+            m2 = parseUDPPacket(udp_packet)
+            m3 = sendMyLoopPacket(m2, self._sensor_map)
+            if len(m3) > 2:
+                yield m3
 
-        s=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        if self._share_socket == True:
-            s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-        s.bind((self._udp_address,self._udp_port))
-        s.settimeout(self._udp_timeout)
+    def gen_udp_packets(self):
+        """Yield raw UDP packets"""
+        loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s and share_socket %s...'
+               % (self._udp_address,self._udp_port,self._udp_timeout,self._share_socket))
 
-        while True:
-            timeouterr=0
-            try:
-                m=s.recvfrom(1024)
-            except timeout:
-                timeouterr=1
-                logerr('Socket timeout waiting for incoming UDP packet!')
-            if timeouterr == 0:
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        try:
+            if self._share_socket:
+                sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+            sock.bind((self._udp_address,self._udp_port))
+            sock.settimeout(self._udp_timeout)
+
+            while True:
                 try:
-                    m0 = str(m[0],'utf-8').replace(",null",",None")    # Python 3
-                except:
-                    m0 = m[0].replace(",null",",None")                 # Python 2
-                m1=''
-                try:
-                    m1=eval(m0)
-                except SyntaxError:
-                    logerr('Packet parse error: %s' % m0)
-                if self._log_raw_packets:
-                    loginf('raw packet: %s' % m1)
-                m2=parseUDPPacket(m1)
-                m3=sendMyLoopPacket(m2, self._sensor_map)
-                if len(m3) > 2:
-                    yield m3
+                    m0, host_info = sock.recvfrom(1024)
+                except timeout:
+                    logerr('Socket timeout waiting for incoming UDP packet!')
+                else:
+                    # Decode the JSON. Some base stations have emitted datagrams that are not pure UTF-8, so
+                    # be prepared to catch the exception.
+                    try:
+                        m1 = json.loads(m0)
+                    except UnicodeDecodeError:
+                        loginf("Unable to decode packet %s" % m0)
+                    else:
+                        if self._log_raw_packets:
+                            loginf('raw packet: %s' % m1)
+                        yield m1
+        finally:
+            sock.close()
 
+if __name__ == '__main__':
+    import optparse
+    import weeutil.logger
+    from weeutil.weeutil import to_sorted_string
 
+    weewx.debug = 2
+
+    weeutil.logger.setup('weatherflow', {})
+
+    usage = """Usage: python -m weatherflow --help
+       python -m weatherflow --version
+       python -m weatherflow [--host=HOST] [--port=PORT] [--timeout=TIMEOUT] [--share-socket]
+                             [--hide-raw] [--hide-parsed]"""
+
+    parser = optparse.OptionParser(usage=usage)
+    parser.add_option('--version', action='store_true',
+                      help='Display driver version')
+    parser.add_option('--address', default='255.255.255.255',
+                      help='UDP address to use. Default is "255.255.255.255".',
+                      metavar="ADDR")
+    parser.add_option('--port', type="int", default=50222,
+                      help='Socket port to use. Default is "50222"',
+                      metavar="PORT")
+    parser.add_option('--timeout', type="int", default=20,
+                      help="How long to wait for a packet.")
+    parser.add_option('--share-socket', default=False, action="store_true",
+                      help="Allow another process to access the port.")
+    parser.add_option('--hide-raw', default=False, action='store_true',
+                      help="Do not show raw UDP packets.")
+    parser.add_option('--hide-parsed', default=False, action='store_true',
+                      help="Do not show parsed UDP packets.")
+    (options, args) = parser.parse_args()
+
+    if options.version:
+        print("Weatherflow driver version %s" % DRIVER_VERSION)
+        exit(0)
+
+    print("Using address '%s' on port %d" % (options.address, options.port))
+
+    config_dict = {
+        'WeatherFlowUDP': {
+            'address': options.address,
+            'port': options.port,
+            'timeout': options.timeout,
+            'share_socket': options.share_socket,
+        }
+    }
+
+    device = loader(config_dict, None)
+
+    for pkt in device.gen_udp_packets():
+        if not options.hide_raw:
+            print('raw:', pkt)
+        parsed = parseUDPPacket(pkt)
+        if not options.hide_parsed:
+            print('parsed:', to_sorted_string(parsed))
