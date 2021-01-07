@@ -257,7 +257,7 @@ def parseUDPPacket(pkt):
             elif pkt['type'][0:2] == 'X_':
                 packet['time_epoch'] = int(time.time())
 
-            else:
+            elif pkt['type'] not in ('light_debug') :
                 logerr("Unknown packet type: '%s'" % pkt['type'])
 
         else:
