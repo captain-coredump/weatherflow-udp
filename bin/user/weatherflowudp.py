@@ -153,7 +153,7 @@ import weewx.wxformulas
 from weeutil.weeutil import tobool
 
 # Default settings...
-DRIVER_VERSION = "1.11"
+DRIVER_VERSION = "1.12"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
 
