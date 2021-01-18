@@ -334,7 +334,6 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._device_id = stn_dict.get('device_id', '')
         self._device_dict = getStationDevices(self._token)
         loginf('sensor map is %s' % self._sensor_map)
-        loginf('type = %s' % type(self._sensor_map))
         loginf('*** Sensor names per packet type')
 
         for pkt_type in fields:
