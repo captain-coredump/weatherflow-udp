@@ -151,6 +151,9 @@ import weewx.units
 import weewx.drivers
 import weewx.wxformulas
 from weeutil.weeutil import tobool
+import requests
+from datetime import datetime
+import calendar
 
 # Default settings...
 DRIVER_VERSION = "1.12"
@@ -210,13 +213,15 @@ def loader(config_dict, engine):
     return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME])
 
 
-def sendMyLoopPacket(pkt,sensor_map):
+def sendMyLoopPacket(pkt,sensor_map, add_interval):
     packet = dict()
     if 'time_epoch' in pkt:
         packet = {
             'dateTime': pkt['time_epoch'],
             'usUnits' : weewx.METRICWX
         }
+    if add_interval:
+        packet.update({'interval':1})
 
     for pkt_weewx, pkt_label in sensor_map.items():
         if pkt_label.replace("-","_") in pkt:
@@ -266,6 +271,53 @@ def parseUDPPacket(pkt):
         loginf('Corrupt UDP packet? %s' % pkt)
     return packet
 
+def getStationsUrl(token):
+    return 'https://swd.weatherflow.com/swd/rest/stations?token={token}'.format(token = token)
+
+def getObservationsUrl(start, end, token, device_id):
+    return 'https://swd.weatherflow.com/swd/rest/observations/device/{device_id}?token={token}&time_start={start}&time_end={end}'.format(token = token, device_id = device_id, start = start, end = end)
+
+def getStationDevices(token):
+    response = requests.get(getStationsUrl(token))
+    if (response.status_code != 200):
+        raise Exception("Could not fetch station information from WeatherFlow webservice: {}".format(response))
+    stations = response.json()["stations"]
+    result = dict()
+    for station in stations:
+        for device in station["devices"]:
+            if 'serial_number' in device:
+                result.update({device["device_id"]:device["serial_number"]})
+    return result
+    
+def readDataFromWF(start, token, device_id, batch_size):
+    while start < calendar.timegm(datetime.utcnow().utctimetuple()):
+        end = start + batch_size - 1
+        loginf('Reading from {} to {}'.format(datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(end)))
+        response = requests.get(getObservationsUrl(start, end, token, device_id))
+        if (response.status_code != 200):
+            raise Exception("Could not fetch records from WeatherFlow webservice: {}".format(response))
+        yield response.json()
+        start = end
+
+def parseRestPacket(pkt, device_dict):
+    if 'device_id' in pkt:
+        if 'type' in pkt:
+            serial_number = device_dict[pkt['device_id']].replace("-","_")
+            pkt_label = serial_number + "." + pkt['type']
+
+            if pkt['type'] in ('obs_air', 'obs_sky', 'obs_st') and pkt['obs'] != None:
+                for observation in pkt['obs']:
+                    packet = dict()
+                    packet['time_epoch'] = observation[0]
+                    for key, value in zip(fields[pkt['type']], observation):
+                        packet[key + "." + pkt_label] = value
+                    yield packet
+
+        else:
+            loginf('Corrupt REST packet? %s' % pkt)
+    else:
+        loginf('Corrupt REST packet? %s' % pkt)
+
 
 class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
@@ -277,7 +329,12 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._udp_timeout = int(stn_dict.get('udp_timeout', 90))
         self._share_socket = tobool(stn_dict.get('share_socket', False))
         self._sensor_map = stn_dict.get('sensor_map', {})
+        self._token = stn_dict.get('token', '')
+        self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
+        self._device_id = stn_dict.get('device_id', '')
+        self._device_dict = getStationDevices(self._token)
         loginf('sensor map is %s' % self._sensor_map)
+        loginf('type = %s' % type(self._sensor_map))
         loginf('*** Sensor names per packet type')
 
         for pkt_type in fields:
@@ -289,8 +346,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genLoopPackets(self):
         for udp_packet in self.gen_udp_packets():
             m2 = parseUDPPacket(udp_packet)
-            m3 = sendMyLoopPacket(m2, self._sensor_map)
+            m3 = sendMyLoopPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
+                loginf('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                 yield m3
 
     def gen_udp_packets(self):
@@ -323,6 +381,24 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                         yield m1
         finally:
             sock.close()
+
+    @property
+    def archive_interval(self):
+        return 5
+
+    def genArchiveRecords(self, since_ts):
+        if since_ts == None:
+            since_ts = int(time.time()) - 365 * 24 * 60 * 60
+
+        loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
+        if self._token != "":
+            for packet in readDataFromWF(since_ts + 1, self._token, self._device_id, self._batch_size):
+                for observation in parseRestPacket(packet, self._device_dict):
+                    m3 = sendMyLoopPacket(observation, self._sensor_map, True)
+                    if len(m3) > 2:
+                        # and m3['dateTime'] < (60 * (int(time.time() / 60)))
+                        loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        yield m3
 
 if __name__ == '__main__':
     import optparse
