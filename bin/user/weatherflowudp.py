@@ -154,6 +154,7 @@ from weeutil.weeutil import tobool
 import requests
 from datetime import datetime
 import calendar
+from configobj import ConfigObj
 
 # Default settings...
 DRIVER_VERSION = "1.12"
@@ -176,6 +177,10 @@ try:
         log.info(msg)
 
 
+    def logwrn(msg):
+        log.warn(msg)
+
+
     def logerr(msg):
         log.error(msg)
 
@@ -194,6 +199,10 @@ except ImportError:
 
     def loginf(msg):
         logmsg(syslog.LOG_INFO, msg)
+
+
+    def logwrn(msg):
+        logmsg(syslog.LOG_WARNING, msg)
 
 
     def logerr(msg):
@@ -318,6 +327,82 @@ def parseRestPacket(pkt, device_dict):
     else:
         loginf('Corrupt REST packet? %s' % pkt)
 
+def getDevices(devicesString):
+    devices = list()
+    for device in devicesString.split(','):
+        if device != '':
+            devices.append(device.strip().upper())
+    return devices
+
+
+def getSensorMap(devices, device_dict):
+    configObj = ConfigObj()
+    configObj['sensor_map'] = {}
+    devices.reverse()
+    for device in devices:
+        if device not in device_dict.values():
+            logwrn('Unknown device {}, skipping'.format(device))
+            continue
+        typeString = device[0:3]
+        packageTypes = {
+            'ST-':'obs_st',
+            'AR-':'obs_air',
+            'SK-':'obs_sky',
+            'HB-':None
+        }
+        fieldsDictionary = {
+            'ST-':
+                {
+                    'outTemp': 'air_temperature',
+                    'outHumidity': 'relative_humidity',
+                    'pressure': 'station_pressure',
+                    'lightning_strike_count': 'lightning_strike_count',
+                    'lightning_distance': 'lightning_strike_avg_distance',
+                    'outTempBatteryStatus': 'battery',
+                    'windSpeed': 'wind_avg',
+                    'windDir': 'wind_direction',
+                    'windGust': 'wind_gust',
+                    'luminosity': 'illuminance',
+                    'UV': 'uv',
+                    'rain': 'rain_accumulated',
+                    'windBatteryStatus': 'battery',
+                    'radiation': 'solar_radiation'
+                },
+            'AR-':
+                {
+                    'outTemp': 'air_temperature',
+                    'outHumidity': 'relative_humidity',
+                    'pressure': 'station_pressure',
+                    'lightning_strike_count': 'lightning_strike_count',
+                    'lightning_distance': 'lightning_strike_avg_distance',
+                    'outTempBatteryStatus': 'battery'
+                },
+            'SK-':
+                {
+                    'windSpeed': 'wind_avg',
+                    'windDir': 'wind_direction',
+                    'windGust': 'wind_gust',
+                    'luminosity': 'illuminance',
+                    'UV': 'uv',
+                    'rain': 'rain_accumulated',
+                    'windBatteryStatus': 'battery',
+                    'radiation': 'solar_radiation'
+                },
+            'HB-': { }
+        }
+        if typeString not in fieldsDictionary:
+            logwrn('Unknown type for device {}' % device)
+            continue
+        fields = fieldsDictionary[typeString]
+        errors = False
+        for field in fields:
+            if field in configObj['sensor_map'].dict():
+                errors = True
+                logwrn('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]))
+            configObj['sensor_map'].update({field: '{}.{}.{}'.format(fields[field], device, packageTypes[typeString])})
+        if errors:
+            logwrn('Mapping errors occurred. You should probably configure a manual sensor-map')
+    return configObj['sensor_map']
 
 class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
@@ -328,11 +413,15 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._udp_port = int(stn_dict.get('udp_port', 50222))
         self._udp_timeout = int(stn_dict.get('udp_timeout', 90))
         self._share_socket = tobool(stn_dict.get('share_socket', False))
-        self._sensor_map = stn_dict.get('sensor_map', {})
+        self._sensor_map = stn_dict.get('sensor_map', None)
         self._token = stn_dict.get('token', '')
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._device_id = stn_dict.get('device_id', '')
         self._device_dict = getStationDevices(self._token)
+        self._devices = getDevices(stn_dict.get('devices', self._device_dict.values()))
+        if self._sensor_map == None:
+            self._sensor_map = getSensorMap(self._devices, self._device_dict)
+
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
 
