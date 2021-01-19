@@ -472,7 +472,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     @property
     def archive_interval(self):
-        return 5
+        return 1
 
     def genArchiveRecords(self, since_ts):
         if since_ts == None:
