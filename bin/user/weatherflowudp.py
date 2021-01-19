@@ -291,27 +291,30 @@ def getStationDevices(token):
     if (response.status_code != 200):
         raise Exception("Could not fetch station information from WeatherFlow webservice: {}".format(response))
     stations = response.json()["stations"]
-    result = dict()
+    device_id_dict = dict()
+    device_dict = dict()
     for station in stations:
         for device in station["devices"]:
             if 'serial_number' in device:
-                result.update({device["device_id"]:device["serial_number"]})
-    return result
-    
-def readDataFromWF(start, token, device_id, batch_size):
+                device_id_dict.update({device["device_id"]:device["serial_number"]})
+                device_dict.update({device["serial_number"]:device["device_id"]})
+    return device_id_dict, device_dict
+
+def readDataFromWF(start, token, devices, device_dict, batch_size):
     while start < calendar.timegm(datetime.utcnow().utctimetuple()):
         end = start + batch_size - 1
         loginf('Reading from {} to {}'.format(datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(end)))
-        response = requests.get(getObservationsUrl(start, end, token, device_id))
-        if (response.status_code != 200):
-            raise Exception("Could not fetch records from WeatherFlow webservice: {}".format(response))
-        yield response.json()
-        start = end
+        for device in devices:
+            response = requests.get(getObservationsUrl(start, end, token, device_dict[device]))
+            if (response.status_code != 200):
+                raise Exception("Could not fetch records from WeatherFlow webservice: {}".format(response))
+            yield response.json()
+            start = end
 
-def parseRestPacket(pkt, device_dict):
+def parseRestPacket(pkt, device_id_dict):
     if 'device_id' in pkt:
         if 'type' in pkt:
-            serial_number = device_dict[pkt['device_id']].replace("-","_")
+            serial_number = device_id_dict[pkt['device_id']].replace("-","_")
             pkt_label = serial_number + "." + pkt['type']
 
             if pkt['type'] in ('obs_air', 'obs_sky', 'obs_st') and pkt['obs'] != None:
@@ -321,26 +324,30 @@ def parseRestPacket(pkt, device_dict):
                     for key, value in zip(fields[pkt['type']], observation):
                         packet[key + "." + pkt_label] = value
                     yield packet
-
         else:
             loginf('Corrupt REST packet? %s' % pkt)
     else:
         loginf('Corrupt REST packet? %s' % pkt)
 
-def getDevices(devicesString):
-    devices = list()
+def getDevices(devicesString, devices):
+    result = list()
     for device in devicesString.split(','):
         if device != '':
-            devices.append(device.strip().upper())
-    return devices
+            if device in devices:
+                result.append(device.strip().upper())
+            else:
+                logwrn('Configured device {} is unknown. Skipped.'.format(device))
+    if not result:
+        raise Exception("None of the configured devices ({}) were available for the given API-token. Aborting.".format(devicesString))
+    return result
 
 
-def getSensorMap(devices, device_dict):
+def getSensorMap(devices, device_id_dict):
     configObj = ConfigObj()
     configObj['sensor_map'] = {}
     devices.reverse()
     for device in devices:
-        if device not in device_dict.values():
+        if device not in device_id_dict.values():
             logwrn('Unknown device {}, skipping'.format(device))
             continue
         typeString = device[0:3]
@@ -416,11 +423,10 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._sensor_map = stn_dict.get('sensor_map', None)
         self._token = stn_dict.get('token', '')
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
-        self._device_id = stn_dict.get('device_id', '')
-        self._device_dict = getStationDevices(self._token)
-        self._devices = getDevices(stn_dict.get('devices', self._device_dict.values()))
+        self._device_id_dict, self._device_dict = getStationDevices(self._token)
+        self._devices = getDevices(stn_dict.get('devices', self._device_dict.keys()), self._device_dict.keys())
         if self._sensor_map == None:
-            self._sensor_map = getSensorMap(self._devices, self._device_dict)
+            self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
@@ -480,8 +486,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
         loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
         if self._token != "":
-            for packet in readDataFromWF(since_ts + 1, self._token, self._device_id, self._batch_size):
-                for observation in parseRestPacket(packet, self._device_dict):
+            for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
+                for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
                     if len(m3) > 2:
                         # and m3['dateTime'] < (60 * (int(time.time() / 60)))
