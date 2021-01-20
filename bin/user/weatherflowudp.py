@@ -309,7 +309,7 @@ def readDataFromWF(start, token, devices, device_dict, batch_size):
             if (response.status_code != 200):
                 raise Exception("Could not fetch records from WeatherFlow webservice: {}".format(response))
             yield response.json()
-            start = end
+        start = end
 
 def parseRestPacket(pkt, device_id_dict):
     if 'device_id' in pkt:
