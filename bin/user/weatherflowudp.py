@@ -329,18 +329,30 @@ def parseRestPacket(pkt, device_id_dict):
     else:
         loginf('Corrupt REST packet? %s' % pkt)
 
-def getDevices(devicesString, devices):
+def getDevices(devicesList, devices):
+    devicesList = ensureList(devicesList)
     result = list()
-    for device in devicesString.split(','):
+    for device in devicesList:
         if device != '':
             if device in devices:
                 result.append(device.strip().upper())
             else:
                 logwrn('Configured device {} is unknown. Skipped.'.format(device))
     if not result:
-        raise Exception("None of the configured devices ({}) were available for the given API-token. Aborting.".format(devicesString))
+        raise Exception("None of the configured devices ({}) were available for the given API-token. Aborting.".format(', '.join(devicesList)))
     return result
 
+def ensureList(inputList):
+    try:
+        basestring
+    except NameError:
+        basestring = str
+    if isinstance(inputList, basestring):
+        result = list()
+        result.append(inputList)
+        return result
+    else:
+        return inputList
 
 def getSensorMap(devices, device_id_dict):
     configObj = ConfigObj()
@@ -424,7 +436,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._token = stn_dict.get('token', '')
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
-        self._devices = getDevices(stn_dict.get('devices', ','.join(self._device_dict.keys())), self._device_dict.keys())
+        self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys())
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
