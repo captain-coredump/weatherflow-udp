@@ -424,7 +424,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._token = stn_dict.get('token', '')
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
-        self._devices = getDevices(stn_dict.get('devices', self._device_dict.keys()), self._device_dict.keys())
+        self._devices = getDevices(stn_dict.get('devices', ','.join(self._device_dict.keys())), self._device_dict.keys())
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
