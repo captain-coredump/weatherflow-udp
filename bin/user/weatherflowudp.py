@@ -301,33 +301,70 @@ def getStationDevices(token):
     return device_id_dict, device_dict
 
 def readDataFromWF(start, token, devices, device_dict, batch_size):
-    while start < calendar.timegm(datetime.utcnow().utctimetuple()):
+    isFinished = False
+    while not isFinished: # end > calendar.timegm(datetime.utcnow().utctimetuple()):
         end = start + batch_size - 1
-        loginf('Reading from {} to {}'.format(datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(end)))
+        lastTimestamp = None
+        logdbg('Reading from {} to {}'.format(datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(end)))
+        results = list()
+        timestamps = None
         for device in devices:
-            response = requests.get(getObservationsUrl(start, end, token, device_dict[device]))
+            logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
+            response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]))
             if (response.status_code != 200):
                 raise Exception("Could not fetch records from WeatherFlow webservice: {}".format(response))
-            yield response.json()
-        start = end
+            jsonResponse = response.json()
+            if lastTimestamp == None and jsonResponse['obs'] != None:
+                lastTimestamp = sorted(jsonResponse['obs'], key = lambda i: i[0], reverse = True)[0][0]
+
+            result = dict()
+            result['device_id'] = jsonResponse['device_id']
+            result['type'] = jsonResponse['type']
+            observations = sorted((jsonResponse['obs'] or list()), key = lambda x : x[0])
+            newTimestamps = [observation[0] for observation in observations]
+            timestamps = timestamps or (timestamps or list()) + list(set(newTimestamps) - set(timestamps or list()))
+            result['obs'] = dict(zip(newTimestamps, observations))
+
+            results.append(result)
+        combinedResult = dict()
+        combinedResult['device_ids'] = [result['device_id'] for result in results]
+        combinedResult['types'] = [result['type'] for result in results]
+        combinedResult['obs'] = list()
+        for timestamp in sorted(timestamps):
+            observationsForTimestamp = list()
+            for result in results:
+                if 'obs' in result and timestamp in result['obs']:
+                    observationsForTimestamp.append(result['obs'][timestamp])
+                else:
+                    observationsForTimestamp.append(None)
+            combinedResult['obs'].append(observationsForTimestamp)
+
+        yield combinedResult
+        if end > calendar.timegm(datetime.utcnow().utctimetuple()):
+            isFinished = True
+        else:
+            start = end if lastTimestamp == None else lastTimestamp + 1
 
 def parseRestPacket(pkt, device_id_dict):
-    if 'device_id' in pkt:
-        if 'type' in pkt:
-            serial_number = device_id_dict[pkt['device_id']].replace("-","_")
-            pkt_label = serial_number + "." + pkt['type']
-
-            if pkt['type'] in ('obs_air', 'obs_sky', 'obs_st') and pkt['obs'] != None:
-                for observation in pkt['obs']:
-                    packet = dict()
-                    packet['time_epoch'] = observation[0]
-                    for key, value in zip(fields[pkt['type']], observation):
-                        packet[key + "." + pkt_label] = value
-                    yield packet
-        else:
-            loginf('Corrupt REST packet? %s' % pkt)
-    else:
-        loginf('Corrupt REST packet? %s' % pkt)
+    label_list = list()
+    pos = 0
+    for device_id in pkt['device_ids']:        
+        label_list.append(device_id_dict[device_id].replace("-","_") + "." + pkt['types'][pos])
+        pos += 1
+    fields_list = list()
+    for type in pkt['types']:
+        fields_list.append(fields[type])
+    for observations in pkt['obs']:
+        packet = dict()
+        pos = 0
+        for observation in observations:
+            if observation == None:
+                continue
+            packet['time_epoch'] = observation[0]
+            for key, value in zip(fields_list[pos], observation):
+                packet[key + "." + label_list[pos]] = value
+            pos += 1
+        yield packet
 
 def getDevices(devicesList, devices):
     devicesList = ensureList(devicesList)
@@ -501,8 +538,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
                 for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
-                    if len(m3) > 2:
-                        # and m3['dateTime'] < (60 * (int(time.time() / 60)))
+                    if len(m3) > 3:
                         loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         yield m3
 
