@@ -474,6 +474,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys())
+        self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
@@ -533,14 +534,16 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         if since_ts == None:
             since_ts = int(time.time()) - 365 * 24 * 60 * 60
 
-        loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
-        if self._token != "":
+        if self._token != "" and self._rest_enabled:
+            loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
                 for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
                     if len(m3) > 3:
                         loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         yield m3
+        else:
+            loginf('Skipped fetching from REST API')
 
 if __name__ == '__main__':
     import optparse
