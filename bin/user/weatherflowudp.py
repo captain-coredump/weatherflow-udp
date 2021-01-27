@@ -287,6 +287,8 @@ def getObservationsUrl(start, end, token, device_id):
     return 'https://swd.weatherflow.com/swd/rest/observations/device/{device_id}?token={token}&time_start={start}&time_end={end}'.format(token = token, device_id = device_id, start = start, end = end)
 
 def getStationDevices(token):
+    if not token:
+        return dict(), dict()
     response = requests.get(getStationsUrl(token))
     if (response.status_code != 200):
         raise Exception("Could not fetch station information from WeatherFlow webservice: {}".format(response))
@@ -366,7 +368,9 @@ def parseRestPacket(pkt, device_id_dict):
             pos += 1
         yield packet
 
-def getDevices(devicesList, devices):
+def getDevices(devicesList, devices, token):
+    if not token:
+        return list()
     devicesList = ensureList(devicesList)
     result = list()
     for device in devicesList:
@@ -473,7 +477,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._token = stn_dict.get('token', '')
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
-        self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys())
+        self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
