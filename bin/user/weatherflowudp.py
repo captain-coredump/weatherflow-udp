@@ -178,7 +178,7 @@ try:
 
 
     def logwrn(msg):
-        log.warn(msg)
+        log.warning(msg)
 
 
     def logerr(msg):
@@ -208,6 +208,8 @@ except ImportError:
     def logerr(msg):
         logmsg(syslog.LOG_ERR, msg)
 
+class DriverException(Exception):
+    pass
 
 # Observation record fields...
 fields = dict()
@@ -291,7 +293,7 @@ def getStationDevices(token):
         return dict(), dict()
     response = requests.get(getStationsUrl(token))
     if (response.status_code != 200):
-        raise Exception("Could not fetch station information from WeatherFlow webservice: {}".format(response))
+        raise DriverException("Could not fetch station information from WeatherFlow webservice: {}".format(response))
     stations = response.json()["stations"]
     device_id_dict = dict()
     device_dict = dict()
@@ -314,7 +316,7 @@ def readDataFromWF(start, token, devices, device_dict, batch_size):
             logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
             response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]))
             if (response.status_code != 200):
-                raise Exception("Could not fetch records from WeatherFlow webservice: {}".format(response))
+                raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
             jsonResponse = response.json()
             if lastTimestamp == None and jsonResponse['obs'] != None:
                 lastTimestamp = sorted(jsonResponse['obs'], key = lambda i: i[0], reverse = True)[0][0]
@@ -368,7 +370,7 @@ def parseRestPacket(pkt, device_id_dict):
             pos += 1
         yield packet
 
-def getDevices(devicesList, devices, token):
+def getDevices(devicesList, devices, token, printIt=False):
     if not token:
         return list()
     devicesList = ensureList(devicesList)
@@ -378,9 +380,9 @@ def getDevices(devicesList, devices, token):
             if device in devices:
                 result.append(device.strip().upper())
             else:
-                logwrn('Configured device {} is unknown. Skipped.'.format(device))
+                warning('Configured device {} is unknown. Skipped.'.format(device), printIt)
     if not result:
-        raise Exception("None of the configured devices ({}) were available for the given API-token. Aborting.".format(', '.join(devicesList)))
+        raise DriverException("None of the configured devices ({}) were available for the given API-token. Aborting.".format(', '.join(devicesList)))
     return result
 
 def ensureList(inputList):
@@ -395,13 +397,13 @@ def ensureList(inputList):
     else:
         return inputList
 
-def getSensorMap(devices, device_id_dict):
+def getSensorMap(devices, device_id_dict, printIt=False):
     configObj = ConfigObj()
     configObj['sensor_map'] = {}
     devices.reverse()
     for device in devices:
         if device not in device_id_dict.values():
-            logwrn('Unknown device {}, skipping'.format(device))
+            warning('Unknown device {}, skipping'.format(device), printIt)
             continue
         typeString = device[0:3]
         packageTypes = {
@@ -451,18 +453,24 @@ def getSensorMap(devices, device_id_dict):
             'HB-': { }
         }
         if typeString not in fieldsDictionary:
-            logwrn('Unknown type for device {}' % device)
+            warning('Unknown type for device {}' % device, printIt)
             continue
         fields = fieldsDictionary[typeString]
         errors = False
         for field in fields:
             if field in configObj['sensor_map'].dict():
                 errors = True
-                logwrn('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]))
+                warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
             configObj['sensor_map'].update({field: '{}.{}.{}'.format(fields[field], device, packageTypes[typeString])})
         if errors:
-            logwrn('Mapping errors occurred. You should probably configure a manual sensor-map')
+            warning('Mapping errors occurred. You should probably configure a manual sensor-map', printIt)
     return configObj['sensor_map']
+
+def warning(warning, printIt):
+    if printIt:
+        print('Warning: {}'.format(warning))
+    else:
+        logwrn(warning)
 
 class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
@@ -560,6 +568,7 @@ if __name__ == '__main__':
 
     usage = """Usage: python -m weatherflow --help
        python -m weatherflow --version
+       python -m weatherflow --create-sensor-map --token=TOKEN [--devices=DEVICES]
        python -m weatherflow [--host=HOST] [--port=PORT] [--timeout=TIMEOUT] [--share-socket]
                              [--hide-raw] [--hide-parsed]"""
 
@@ -580,11 +589,40 @@ if __name__ == '__main__':
                       help="Do not show raw UDP packets.")
     parser.add_option('--hide-parsed', default=False, action='store_true',
                       help="Do not show parsed UDP packets.")
+    parser.add_option('--create-sensor-map', action='store_true',
+                      help="Generate a sensor-map.")
+    parser.add_option('--token',
+                      help="Provide API token for WeatherFlow API.",
+                      metavar="TOKEN")
+    parser.add_option('--devices',
+                      help='Provide devices (comma-separated) to use for the sensor-map.',
+                      metavar='DEVICES')
     (options, args) = parser.parse_args()
 
     if options.version:
         print("Weatherflow driver version %s" % DRIVER_VERSION)
         exit(0)
+
+    if options.create_sensor_map:
+        if not options.token:
+            print('Please provide an API token with the --token=TOKEN option')
+            exit(1)
+        try:
+            device_id_dict, device_dict = getStationDevices(options.token)
+            devicesList = [s.strip() for s in options.devices.split(',')] if ',' in options.devices else options.devices if len(options.devices) > 0 else list(device_dict.keys())
+            devices = getDevices(devicesList, device_dict.keys(), options.token, True)
+            sensor_map = getSensorMap(devices, device_id_dict, True)
+            print('Sensor map:')
+            print()
+            print('    [[sensor_map]]')
+            for key in sensor_map.keys():
+                print('        {} = {}'.format(key, sensor_map[key]))
+            print()
+            print('You can copy the above into your weewx.conf file directly after your [WeatherFlowUDP] section')
+            exit(0)
+        except DriverException as ex:
+            print('Error: {}'.format(ex))
+            exit(1)
 
     print("Using address '%s' on port %d" % (options.address, options.port))
 
