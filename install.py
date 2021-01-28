@@ -10,7 +10,7 @@ def loader():
 class WeatherFlowUDPInstaller(ExtensionInstaller):
     def __init__(self):
         super(WeatherFlowUDPInstaller, self).__init__(
-            version="1.11",
+            version="1.12",
             name='weatherflowudp',
             description='Capture data from WeatherFlow Bridge via UDP broadcast packets',
             author="Arthur Emerson",
