@@ -1,3 +1,9 @@
+1.12 2021-02-03 by Jan-Jaap van der Geer, jjvdgeer@yahoo.com
+* Added support for fetching Archive records from the REST interface
+* Made the sensor map optional, fetching the info from the REST interface
+* Let the hardware name function return the actual type of devices
+* Don't fill the log file with messages "Unknown packet type: 'light_debug'".
+
 1.11 2020-07-16 by Tom Keffer, tkeffer@gmail.com
 * Ported to Python 2 (as well as Python 3).
 * Ported to WeeWX V3.x (as well as V4.x).
