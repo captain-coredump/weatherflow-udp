@@ -427,7 +427,6 @@ def getSensorMap(devices, device_id_dict, printIt=False):
                     'luminosity': 'illuminance',
                     'UV': 'uv',
                     'rain': 'rain_accumulated',
-                    'windBatteryStatus': 'battery',
                     'radiation': 'solar_radiation'
                 },
             'AR-':
