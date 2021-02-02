@@ -497,6 +497,17 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             loginf('packet %s: %s' % (pkt_type,fields[pkt_type]))
 
     def hardware_name(self):
+        if len(self._devices) == 1:
+            if self._devices[0].startswith('ST-'):
+                return 'WeatherFlow Tempest'
+            elif self._devices[0].startswith('AR-'):
+                return 'WeatherFlow Air'
+            elif self._devices[0].startswith('SK-'):
+                return 'WeatherFlow Sky'
+            else:
+                return HARDWARE_NAME
+        elif len(self._devices) == 2 and self._devices[0][:3] in ['AR-', 'SK-'] and self._devices[1][:3] in ['AR-', 'SK-'] and self._devices[0][:3] != self._devices[1][:3]:
+            return 'WeatherFlow Air/Sky'
         return HARDWARE_NAME
 
     def genLoopPackets(self):
