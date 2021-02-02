@@ -39,6 +39,12 @@ However, you need to change the last line and update it with a token from your o
     token = 79ebd9e8-4242-4a58-bd76-40fa50d894ce
 ```
 
+When this is done you need to tell weewx to use the WeatherFlow driver. This is done by setting the station_type variable in the [Station] section near the top to 'WeatherFlowUDP', like this:
+
+```
+    station_type = WeatherFlowUDP
+```
+
 For most setups this is all you have to do. However if you have more than a single Tempest or a set with Air & Sky or you just want to do more advanced things you might want to look through the rest of this section.
 
 ## Options
