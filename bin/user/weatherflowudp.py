@@ -612,7 +612,7 @@ if __name__ == '__main__':
                       metavar="TOKEN")
     parser.add_option('--devices',
                       help='Provide devices (comma-separated) to use for the sensor-map.',
-                      metavar='DEVICES')
+                      metavar='DEVICES', default='')
     (options, args) = parser.parse_args()
 
     if options.version:
@@ -625,7 +625,7 @@ if __name__ == '__main__':
             exit(1)
         try:
             device_id_dict, device_dict = getStationDevices(options.token)
-            devicesList = [s.strip() for s in options.devices.split(',')] if ',' in (options.devices, '') else options.devices if len(options.devices or '') > 0 else list(device_dict.keys())
+            devicesList = [s.strip() for s in options.devices.split(',')] if ',' in options.devices else options.devices if len(options.devices) > 0 else list(device_dict.keys())
             devices = getDevices(devicesList, device_dict.keys(), options.token, True)
             sensor_map = getSensorMap(devices, device_id_dict, True)
             print('Sensor map:')
