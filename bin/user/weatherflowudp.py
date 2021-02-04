@@ -152,7 +152,7 @@ import weewx.drivers
 import weewx.wxformulas
 from weeutil.weeutil import tobool
 import requests
-from datetime import datetime,timedelta
+from datetime import datetime
 import calendar
 from configobj import ConfigObj
 
