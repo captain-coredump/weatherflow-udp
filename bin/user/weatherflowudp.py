@@ -152,7 +152,7 @@ import weewx.drivers
 import weewx.wxformulas
 from weeutil.weeutil import tobool
 import requests
-from datetime import datetime
+from datetime import datetime,timedelta
 import calendar
 from configobj import ConfigObj
 
@@ -500,6 +500,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
+        self._lastUDPpackage = None
 
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
@@ -515,7 +516,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             m2 = parseUDPPacket(udp_packet)
             m3 = sendMyLoopPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
-                loginf('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                timestamp = m3['dateTime']
+                loginf('Import from UDP: %s' % datetime.utcfromtimestamp(timestamp))
+                self._lastUDPpackage = max(timestamp, self._lastUDPpackage) if self._lastUDPpackage != None else timestamp
                 yield m3
 
     def gen_udp_packets(self):
@@ -554,10 +557,12 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         return 60
 
     def genArchiveRecords(self, since_ts):
-        if since_ts == None:
-            since_ts = int(time.time()) - 365 * 24 * 60 * 60
-
         if self._token != "" and self._rest_enabled:
+            if since_ts == None:
+                since_ts = int(time.time()) - 365 * 24 * 60 * 60
+            elif self._lastUDPpackage != None:
+                since_ts = max(since_ts, self._lastUDPpackage + 1)
+
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
                 for observation in parseRestPacket(packet, self._device_id_dict):
