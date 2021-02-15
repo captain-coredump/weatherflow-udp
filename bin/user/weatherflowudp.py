@@ -515,7 +515,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             m2 = parseUDPPacket(udp_packet)
             m3 = sendMyLoopPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
-                loginf('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                 yield m3
 
     def gen_udp_packets(self):
@@ -559,7 +559,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
                     if len(m3) > 3:
-                        loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         yield m3
         else:
             loginf('Skipped fetching from REST API')
