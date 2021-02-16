@@ -591,10 +591,11 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                             if archive_record:
                                 logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
                                 yield archive_record
-            archive_record = archivePeriod.getRecord()
-            if archive_record:
-                # return record from last processed accumulator 
-                yield archive_record
+            if archivePeriod:
+                archive_record = archivePeriod.getRecord()
+                if archive_record:
+                    # return record from last processed accumulator 
+                    yield archive_record
         else:
             loginf('Skipped fetching from REST API')
 
