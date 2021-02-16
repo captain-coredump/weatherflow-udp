@@ -574,7 +574,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                                 archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
                             
                             if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
-                                archivePeriod.startNextArchiveInterval()
+                                archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
                             
                             # Try adding the API packet to the existing accumulator. If the
                             # timestamp is outside the timespan of the accumulator, an exception
@@ -610,8 +610,8 @@ class ArchivePeriod:
         self._accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts))
         self._old_accumulator = None
         
-    def startNextArchiveInterval(self):
-        self._start_archive_period_ts = self._end_archive_period_ts
+    def startNextArchiveInterval(self, start_archive_period_ts):
+        self._start_archive_period_ts = start_archive_period_ts
         self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
         if (self._end_archive_period_ts > time.time()):
             self_end_archive_period_ts = int(time.time())
