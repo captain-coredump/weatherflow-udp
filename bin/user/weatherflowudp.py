@@ -552,11 +552,11 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         finally:
             sock.close()
 
-    def genStartupRecords(self, since_ts):
+    def genStartupRecords(self, since_ts):            
         if since_ts == None:
             since_ts = int(time.time()) - 365 * 24 * 60 * 60
             
-        accumulator = None
+        archivePeriod = None
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
@@ -569,52 +569,69 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                             yield m3
                         else:
                             # Use an accumulator and treat REST API data like loop data
-                            if not accumulator:
-                                # init accumulator
-                                start_archive_period_ts = weeutil.weeutil.startOfInterval(since_ts, self._archive_interval)
-                                end_archive_period_ts = start_archive_period_ts + self._archive_interval
-                                if (end_archive_period_ts > time.time()):
-                                    end_archive_period_ts = int(time.time())
-                                end_archive_delay_ts = end_archive_period_ts + self._archive_delay
-                                accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts))
+                            if not archivePeriod:
+                                # init archivePeriod
+                                archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(since_ts, self._archive_interval), self._archive_interval, self._archive_delay)
                             
-                            old_accumulator = None
-                            if m3['dateTime'] >= end_archive_delay_ts:
-                                start_archive_period_ts = end_archive_period_ts
-                                end_archive_period_ts = end_archive_period_ts + self._archive_interval
-                                if (end_archive_period_ts > time.time()):
-                                    end_archive_period_ts = int(time.time())
-                                end_archive_delay_ts = end_archive_period_ts + self._archive_delay
-                                
-                                (old_accumulator, accumulator) = \
-                                (accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts)))
+                            if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
+                                archivePeriod.startNextArchiveInterval()
                             
-                            # Try adding the LOOP packet to the existing accumulator. If the
+                            # Try adding the API packet to the existing accumulator. If the
                             # timestamp is outside the timespan of the accumulator, an exception
                             # will be thrown
                             try:
-                                accumulator.addRecord(m3, add_hilo=self._loopHiLo)
+                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
                             except weewx.accum.OutOfSpan:
                                 # Shuffle accumulators:
-                                start_archive_period_ts = end_archive_period_ts
-                                end_archive_period_ts = end_archive_period_ts + self._archive_interval
-                                if (end_archive_period_ts > time.time()):
-                                    end_archive_period_ts = time.time()
-                                end_archive_delay_ts = end_archive_period_ts + self._archive_delay
-                                
-                                (old_accumulator, accumulator) = \
-                                (accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts)))
+                                archivePeriod.startNextArchiveInterval()
                                 # Try again:
-                                accumulator.addRecord(m3, add_hilo=self._loopHiLo)  
+                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
                 
-                            if old_accumulator:
-                                logdbg('Archiving accumulated data from REST %s' % start_archive_period_ts)
-                                yield old_accumulator.getRecord()
-            if accumulator:
+                            archive_record = archivePeriod.getPreviousRecord()
+                            if archive_record:
+                                logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
+                                yield archive_record
+            archive_record = archivePeriod.getRecord()
+            if archive_record:
                 # return record from last processed accumulator 
-                yield accumulator.getRecord()
+                yield archive_record
         else:
             loginf('Skipped fetching from REST API')
+
+class ArchivePeriod:
+    def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
+        self._start_archive_period_ts = start_archive_period_ts
+        self._archive_interval = archive_interval
+        self._archive_delay = archive_delay
+        self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
+        if (self._end_archive_period_ts > time.time()):
+                self._end_archive_period_ts = int(time.time())
+        self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
+        self._accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts))
+        self._old_accumulator = None
+        
+    def startNextArchiveInterval(self):
+        self._start_archive_period_ts = self._end_archive_period_ts
+        self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
+        if (self._end_archive_period_ts > time.time()):
+            self_end_archive_period_ts = int(time.time())
+        self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
+            
+        (self._old_accumulator, self._accumulator) = \
+        (self._accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
+    
+    def addRecord(self, record, add_hilo=True):
+        self._accumulator.addRecord(record, add_hilo)
+    
+    def getPreviousRecord(self):
+        if (self._old_accumulator):
+            record = self._old_accumulator.getRecord()
+            self._old_accumulator = None
+            return record
+        
+    def getRecord(self):
+        return self._accumulator.getRecord()
+        
 
 if __name__ == '__main__':
     import optparse
