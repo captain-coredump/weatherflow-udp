@@ -571,7 +571,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                             # Use an accumulator and treat REST API data like loop data
                             if not archivePeriod:
                                 # init archivePeriod
-                                archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(since_ts, self._archive_interval), self._archive_interval, self._archive_delay)
+                                archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
                             
                             if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
                                 archivePeriod.startNextArchiveInterval()
