@@ -574,7 +574,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                                 start_archive_period_ts = weeutil.weeutil.startOfInterval(since_ts, self._archive_interval)
                                 end_archive_period_ts = start_archive_period_ts + self._archive_interval
                                 if (end_archive_period_ts > time.time()):
-                                    end_archive_period_ts = time.time()
+                                    end_archive_period_ts = int(time.time())
                                 end_archive_delay_ts = end_archive_period_ts + self._archive_delay
                                 accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts))
                             
@@ -583,7 +583,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                                 start_archive_period_ts = end_archive_period_ts
                                 end_archive_period_ts = end_archive_period_ts + self._archive_interval
                                 if (end_archive_period_ts > time.time()):
-                                    end_archive_period_ts = time.time()
+                                    end_archive_period_ts = int(time.time())
                                 end_archive_delay_ts = end_archive_period_ts + self._archive_delay
                                 
                                 (old_accumulator, accumulator) = \
