@@ -620,11 +620,11 @@ if __name__ == '__main__':
             devices = getDevices(devicesList, device_dict.keys(), options.token, True)
             sensor_map = getSensorMap(devices, device_id_dict, True)
             print('Sensor map:')
-            print()
+            print('')
             print('    [[sensor_map]]')
             for key in sensor_map.keys():
                 print('        {} = {}'.format(key, sensor_map[key]))
-            print()
+            print('')
             print('You can copy the above into your weewx.conf file directly after your [WeatherFlowUDP] section')
             exit(0)
         except DriverException as ex:
