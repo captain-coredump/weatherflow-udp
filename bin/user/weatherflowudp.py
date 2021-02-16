@@ -221,7 +221,7 @@ fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'wind_sample_interval', 'station_pressure', 'air_temperature', 'relative_humidity', 'illuminance', 'uv', 'solar_radiation', 'rain_accumulated', 'precipitation_type', 'lightning_strike_avg_distance', 'lightning_strike_count', 'battery', 'report_interval')
 
 def loader(config_dict, engine):
-    return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME])
+    return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME],**config_dict['StdArchive'])
 
 
 def sendMyLoopPacket(pkt,sensor_map, add_interval):
@@ -498,6 +498,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
+        self._archive_interval = int(stn_dict.get('archive_interval', 60))
+        self._loopHiLo = tobool(stn_dict.get('loop_hilo', True))
+        self._archive_delay = int(stn_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
@@ -552,6 +555,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genStartupRecords(self, since_ts):
         if since_ts == None:
             since_ts = int(time.time()) - 365 * 24 * 60 * 60
+            
+        accumulator = None
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
@@ -559,8 +564,55 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
                     if len(m3) > 3:
-                        logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                        yield m3
+                        loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        if self._archive_interval == 60:
+                            yield m3
+                        else:
+                            # Use an accumulator and treat REST API data like loop data
+                            if not accumulator:
+                                # init accumulator
+                                start_archive_period_ts = weeutil.weeutil.startOfInterval(since_ts, self._archive_interval)
+                                end_archive_period_ts = start_archive_period_ts + self._archive_interval
+                                if (end_archive_period_ts > time.time()):
+                                    end_archive_period_ts = time.time()
+                                end_archive_delay_ts = end_archive_period_ts + self._archive_delay
+                                accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts))
+                            
+                            old_accumulator = None
+                            if m3['dateTime'] >= end_archive_delay_ts:
+                                start_archive_period_ts = end_archive_period_ts
+                                end_archive_period_ts = end_archive_period_ts + self._archive_interval
+                                if (end_archive_period_ts > time.time()):
+                                    end_archive_period_ts = time.time()
+                                end_archive_delay_ts = end_archive_period_ts + self._archive_delay
+                                
+                                (old_accumulator, accumulator) = \
+                                (accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts)))
+                            
+                            # Try adding the LOOP packet to the existing accumulator. If the
+                            # timestamp is outside the timespan of the accumulator, an exception
+                            # will be thrown
+                            try:
+                                accumulator.addRecord(m3, add_hilo=self._loopHiLo)
+                            except weewx.accum.OutOfSpan:
+                                # Shuffle accumulators:
+                                start_archive_period_ts = end_archive_period_ts
+                                end_archive_period_ts = end_archive_period_ts + self._archive_interval
+                                if (end_archive_period_ts > time.time()):
+                                    end_archive_period_ts = time.time()
+                                end_archive_delay_ts = end_archive_period_ts + self._archive_delay
+                                
+                                (old_accumulator, accumulator) = \
+                                (accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_archive_period_ts, end_archive_period_ts)))
+                                # Try again:
+                                accumulator.addRecord(m3, add_hilo=self._loopHiLo)  
+                
+                            if old_accumulator:
+                                logdbg('Archiving accumulated data from REST %s' % start_archive_period_ts)
+                                yield old_accumulator.getRecord()
+            if accumulator:
+                # return record from last processed accumulator 
+                yield accumulator.getRecord()
         else:
             loginf('Skipped fetching from REST API')
 
