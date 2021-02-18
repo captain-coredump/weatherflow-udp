@@ -398,6 +398,51 @@ def ensureList(inputList):
         return inputList
 
 def getSensorMap(devices, device_id_dict, printIt=False):
+    packageTypes = {
+        'ST-':'obs_st',
+        'AR-':'obs_air',
+        'SK-':'obs_sky',
+        'HB-':None
+    }
+    fieldsDictionary = {
+        'ST-':
+            {
+                'outTemp': 'air_temperature',
+                'outHumidity': 'relative_humidity',
+                'pressure': 'station_pressure',
+                'lightning_strike_count': 'lightning_strike_count',
+                'lightning_distance': 'lightning_strike_avg_distance',
+                'outTempBatteryStatus': 'battery',
+                'windSpeed': 'wind_avg',
+                'windDir': 'wind_direction',
+                'windGust': 'wind_gust',
+                'luminosity': 'illuminance',
+                'UV': 'uv',
+                'rain': 'rain_accumulated',
+                'radiation': 'solar_radiation'
+            },
+        'AR-':
+            {
+                'outTemp': 'air_temperature',
+                'outHumidity': 'relative_humidity',
+                'pressure': 'station_pressure',
+                'lightning_strike_count': 'lightning_strike_count',
+                'lightning_distance': 'lightning_strike_avg_distance',
+                'outTempBatteryStatus': 'battery'
+            },
+        'SK-':
+            {
+                'windSpeed': 'wind_avg',
+                'windDir': 'wind_direction',
+                'windGust': 'wind_gust',
+                'luminosity': 'illuminance',
+                'UV': 'uv',
+                'rain': 'rain_accumulated',
+                'windBatteryStatus': 'battery',
+                'radiation': 'solar_radiation'
+            },
+        'HB-': { }
+    }
     configObj = ConfigObj()
     configObj['sensor_map'] = {}
     devices.reverse()
@@ -406,51 +451,6 @@ def getSensorMap(devices, device_id_dict, printIt=False):
             warning('Unknown device {}, skipping'.format(device), printIt)
             continue
         typeString = device[0:3]
-        packageTypes = {
-            'ST-':'obs_st',
-            'AR-':'obs_air',
-            'SK-':'obs_sky',
-            'HB-':None
-        }
-        fieldsDictionary = {
-            'ST-':
-                {
-                    'outTemp': 'air_temperature',
-                    'outHumidity': 'relative_humidity',
-                    'pressure': 'station_pressure',
-                    'lightning_strike_count': 'lightning_strike_count',
-                    'lightning_distance': 'lightning_strike_avg_distance',
-                    'outTempBatteryStatus': 'battery',
-                    'windSpeed': 'wind_avg',
-                    'windDir': 'wind_direction',
-                    'windGust': 'wind_gust',
-                    'luminosity': 'illuminance',
-                    'UV': 'uv',
-                    'rain': 'rain_accumulated',
-                    'radiation': 'solar_radiation'
-                },
-            'AR-':
-                {
-                    'outTemp': 'air_temperature',
-                    'outHumidity': 'relative_humidity',
-                    'pressure': 'station_pressure',
-                    'lightning_strike_count': 'lightning_strike_count',
-                    'lightning_distance': 'lightning_strike_avg_distance',
-                    'outTempBatteryStatus': 'battery'
-                },
-            'SK-':
-                {
-                    'windSpeed': 'wind_avg',
-                    'windDir': 'wind_direction',
-                    'windGust': 'wind_gust',
-                    'luminosity': 'illuminance',
-                    'UV': 'uv',
-                    'rain': 'rain_accumulated',
-                    'windBatteryStatus': 'battery',
-                    'radiation': 'solar_radiation'
-                },
-            'HB-': { }
-        }
         if typeString not in fieldsDictionary:
             warning('Unknown type for device {}' % device, printIt)
             continue
