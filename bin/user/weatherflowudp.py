@@ -564,7 +564,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
                     if len(m3) > 3:
-                        loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         if self._archive_interval == 60:
                             yield m3
                         else:
