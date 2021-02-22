@@ -221,7 +221,7 @@ fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'wind_sample_interval', 'station_pressure', 'air_temperature', 'relative_humidity', 'illuminance', 'uv', 'solar_radiation', 'rain_accumulated', 'precipitation_type', 'lightning_strike_avg_distance', 'lightning_strike_count', 'battery', 'report_interval')
 
 def loader(config_dict, engine):
-    return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME])
+    return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME],**config_dict['StdArchive'])
 
 
 def sendMyLoopPacket(pkt,sensor_map, add_interval):
@@ -498,6 +498,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
+        self._archive_interval = int(stn_dict.get('archive_interval', 60))
+        self._loopHiLo = tobool(stn_dict.get('loop_hilo', True))
+        self._archive_delay = int(stn_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
@@ -552,6 +555,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genStartupRecords(self, since_ts):
         if since_ts == None:
             since_ts = int(time.time()) - 365 * 24 * 60 * 60
+            
+        archivePeriod = None
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
@@ -559,10 +564,75 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 for observation in parseRestPacket(packet, self._device_id_dict):
                     m3 = sendMyLoopPacket(observation, self._sensor_map, True)
                     if len(m3) > 3:
-                        logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                        yield m3
+                        loginf('import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        if self._archive_interval == 60:
+                            yield m3
+                        else:
+                            # Use an accumulator and treat REST API data like loop data
+                            if not archivePeriod:
+                                # init archivePeriod
+                                archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
+                            
+                            if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
+                                archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
+                            
+                            # Try adding the API packet to the existing accumulator. If the
+                            # timestamp is outside the timespan of the accumulator, an exception
+                            # will be thrown
+                            try:
+                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
+                            except weewx.accum.OutOfSpan:
+                                # Shuffle accumulators:
+                                archivePeriod.startNextArchiveInterval()
+                                # Try again:
+                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
+                
+                            archive_record = archivePeriod.getPreviousRecord()
+                            if archive_record:
+                                logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
+                                yield archive_record
+            if archivePeriod:
+                archive_record = archivePeriod.getRecord()
+                if archive_record:
+                    # return record from last processed accumulator 
+                    yield archive_record
         else:
             loginf('Skipped fetching from REST API')
+
+class ArchivePeriod:
+    def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
+        self._start_archive_period_ts = start_archive_period_ts
+        self._archive_interval = archive_interval
+        self._archive_delay = archive_delay
+        self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
+        if (self._end_archive_period_ts > time.time()):
+                self._end_archive_period_ts = int(time.time())
+        self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
+        self._accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts))
+        self._old_accumulator = None
+        
+    def startNextArchiveInterval(self, start_archive_period_ts):
+        self._start_archive_period_ts = start_archive_period_ts
+        self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
+        if (self._end_archive_period_ts > time.time()):
+            self_end_archive_period_ts = int(time.time())
+        self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
+            
+        (self._old_accumulator, self._accumulator) = \
+        (self._accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
+    
+    def addRecord(self, record, add_hilo=True):
+        self._accumulator.addRecord(record, add_hilo)
+    
+    def getPreviousRecord(self):
+        if (self._old_accumulator):
+            record = self._old_accumulator.getRecord()
+            self._old_accumulator = None
+            return record
+        
+    def getRecord(self):
+        return self._accumulator.getRecord()
+        
 
 if __name__ == '__main__':
     import optparse
