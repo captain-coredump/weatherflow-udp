@@ -1,3 +1,9 @@
+1.13 2021-02-22 by Jan-Jaap van der Geer, jjvdgeer@yahoo.com
+* Do not use REST interface for LOOP data
+* Handle not setting --devices when using --create-sensor-map
+* Don't enforce archive_interval
+* Cosmetic change to printing of the sensor-map under python2
+
 1.12 2021-02-03 by Jan-Jaap van der Geer, jjvdgeer@yahoo.com
 * Added support for fetching Archive records from the REST interface
 * Made the sensor map optional, fetching the info from the REST interface
