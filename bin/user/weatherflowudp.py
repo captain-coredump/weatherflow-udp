@@ -398,50 +398,64 @@ def ensureList(inputList):
         return inputList
 
 def getSensorMap(devices, device_id_dict, printIt=False):
-    packageTypes = {
-        'ST-':'obs_st',
-        'AR-':'obs_air',
-        'SK-':'obs_sky',
-        'HB-':None
-    }
     fieldsDictionary = {
         'ST-':
             {
-                'outTemp': 'air_temperature',
-                'outHumidity': 'relative_humidity',
-                'pressure': 'station_pressure',
-                'lightning_strike_count': 'lightning_strike_count',
-                'lightning_distance': 'lightning_strike_avg_distance',
-                'outTempBatteryStatus': 'battery',
-                'windSpeed': 'wind_avg',
-                'windDir': 'wind_direction',
-                'windGust': 'wind_gust',
-                'luminosity': 'illuminance',
-                'UV': 'uv',
-                'rain': 'rain_accumulated',
-                'radiation': 'solar_radiation'
+                'obs_st':
+                {
+                    'outTemp': 'air_temperature',
+                    'outHumidity': 'relative_humidity',
+                    'pressure': 'station_pressure',
+                    'lightning_strike_count': 'lightning_strike_count',
+                    'lightning_distance': 'lightning_strike_avg_distance',
+                    'outTempBatteryStatus': 'battery',
+                    'windSpeed': 'wind_avg',
+                    'windDir': 'wind_direction',
+                    'windGust': 'wind_gust',
+                    'luminosity': 'illuminance',
+                    'UV': 'uv',
+                    'rain': 'rain_accumulated',
+                    'radiation': 'solar_radiation'
+                },
+                'device_status':
+                {
+                    'signal1': 'rssi',
+                    'signal2': 'hub_rssi'
+                }
             },
         'AR-':
             {
-                'outTemp': 'air_temperature',
-                'outHumidity': 'relative_humidity',
-                'pressure': 'station_pressure',
-                'lightning_strike_count': 'lightning_strike_count',
-                'lightning_distance': 'lightning_strike_avg_distance',
-                'outTempBatteryStatus': 'battery'
+                'obs_air':
+                {
+                    'outTemp': 'air_temperature',
+                    'outHumidity': 'relative_humidity',
+                    'pressure': 'station_pressure',
+                    'lightning_strike_count': 'lightning_strike_count',
+                    'lightning_distance': 'lightning_strike_avg_distance',
+                    'outTempBatteryStatus': 'battery'
+                }
             },
         'SK-':
             {
-                'windSpeed': 'wind_avg',
-                'windDir': 'wind_direction',
-                'windGust': 'wind_gust',
-                'luminosity': 'illuminance',
-                'UV': 'uv',
-                'rain': 'rain_accumulated',
-                'windBatteryStatus': 'battery',
-                'radiation': 'solar_radiation'
+                'obs_sky':
+                {
+                    'windSpeed': 'wind_avg',
+                    'windDir': 'wind_direction',
+                    'windGust': 'wind_gust',
+                    'luminosity': 'illuminance',
+                    'UV': 'uv',
+                    'rain': 'rain_accumulated',
+                    'windBatteryStatus': 'battery',
+                    'radiation': 'solar_radiation'
+                }
             },
-        'HB-': { }
+        'HB-':
+            {
+                'hub_status':
+                {
+                    'signal3': 'rssi'
+                }
+            }
     }
     configObj = ConfigObj()
     configObj['sensor_map'] = {}
@@ -454,13 +468,14 @@ def getSensorMap(devices, device_id_dict, printIt=False):
         if typeString not in fieldsDictionary:
             warning('Unknown type for device {}' % device, printIt)
             continue
-        fields = fieldsDictionary[typeString]
         errors = False
-        for field in fields:
-            if field in configObj['sensor_map'].dict():
-                errors = True
-                warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
-            configObj['sensor_map'].update({field: '{}.{}.{}'.format(fields[field], device, packageTypes[typeString])})
+        for packageType in fieldsDictionary[typeString]:
+            fields = fieldsDictionary[typeString][packageType]
+            for field in fields:
+                if field in configObj['sensor_map'].dict():
+                    errors = True
+                    warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
+                configObj['sensor_map'].update({field: '{}.{}.{}'.format(fields[field], device, packageType)})
         if errors:
             warning('Mapping errors occurred. You should probably configure a manual sensor-map', printIt)
     return configObj['sensor_map']
