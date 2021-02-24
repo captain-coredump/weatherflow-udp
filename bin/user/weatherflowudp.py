@@ -221,8 +221,7 @@ fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'wind_sample_interval', 'station_pressure', 'air_temperature', 'relative_humidity', 'illuminance', 'uv', 'solar_radiation', 'rain_accumulated', 'precipitation_type', 'lightning_strike_avg_distance', 'lightning_strike_count', 'battery', 'report_interval')
 
 def loader(config_dict, engine):
-    return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME],**config_dict['StdArchive'])
-
+    return WeatherFlowUDPDriver(config_dict)
 
 def sendMyLoopPacket(pkt,sensor_map, add_interval):
     packet = dict()
@@ -500,8 +499,10 @@ def warning(warning, printIt):
 
 class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
-    def __init__(self, **stn_dict):
+    def __init__(self, all_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
+        stn_dict = all_dict[DRIVER_NAME]
+        std_dict = all_dict['StdArchive']
         self._log_raw_packets = tobool(stn_dict.get('log_raw_packets', False))
         self._udp_address = stn_dict.get('udp_address', '<broadcast>')
         self._udp_port = int(stn_dict.get('udp_port', 50222))
@@ -513,9 +514,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
-        self._archive_interval = int(stn_dict.get('archive_interval', 60))
-        self._loopHiLo = tobool(stn_dict.get('loop_hilo', True))
-        self._archive_delay = int(stn_dict.get('archive_delay', 15))
+        self._archive_interval = int(std_dict.get('archive_interval', 60))
+        self._loopHiLo = tobool(std_dict.get('loop_hilo', True))
+        self._archive_delay = int(std_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
 
