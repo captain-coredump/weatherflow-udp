@@ -709,7 +709,8 @@ if __name__ == '__main__':
             'port': options.port,
             'timeout': options.timeout,
             'share_socket': options.share_socket,
-        }
+        },
+        'StdArchive' : { }
     }
 
     device = loader(config_dict, None)
