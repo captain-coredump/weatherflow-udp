@@ -223,7 +223,7 @@ fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_di
 def loader(config_dict, engine):
     return WeatherFlowUDPDriver(config_dict)
 
-def mapToWeewxPacket(pkt, sensor_map, isRest):
+def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
     packet = dict()
     if 'time_epoch' in pkt:
         packet = {
@@ -232,7 +232,7 @@ def mapToWeewxPacket(pkt, sensor_map, isRest):
         }
 
     if isRest:
-        packet.update({'interval':1})
+        packet.update({'interval':interval})
 
     for pkt_weewx, pkt_label in sensor_map.items():
         for label in ensureList(pkt_label):
@@ -607,7 +607,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
                 for observation in parseRestPacket(packet, self._device_id_dict):
-                    m3 = mapToWeewxPacket(observation, self._sensor_map, True)
+                    m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
                     if len(m3) > 3:
                         logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         if self._archive_interval <= 60:
