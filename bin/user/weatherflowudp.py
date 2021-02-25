@@ -223,19 +223,25 @@ fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_di
 def loader(config_dict, engine):
     return WeatherFlowUDPDriver(config_dict)
 
-def sendMyLoopPacket(pkt,sensor_map, add_interval):
+def mapToWeewxPacket(pkt, sensor_map, isRest):
     packet = dict()
     if 'time_epoch' in pkt:
         packet = {
             'dateTime': pkt['time_epoch'],
             'usUnits' : weewx.METRICWX
         }
-    if add_interval:
+
+    if isRest:
         packet.update({'interval':1})
 
     for pkt_weewx, pkt_label in sensor_map.items():
-        if pkt_label.replace("-","_") in pkt:
-           packet[pkt_weewx] = pkt[pkt_label.replace("-","_")]
+        for label in ensureList(pkt_label):
+            if label.endswith('.rest') and isRest:
+                label = label[:-5]
+            elif label.endswith('.udp') and not isRest:
+                label = label[:-4]
+            if label.replace("-","_") in pkt:
+                packet[pkt_weewx] = pkt[label.replace("-","_")]
 
     return packet
 
@@ -384,15 +390,16 @@ def getDevices(devicesList, devices, token, printIt=False):
         raise DriverException("None of the configured devices ({}) were available for the given API-token. Aborting.".format(', '.join(devicesList)))
     return result
 
-def ensureList(inputList):
+def isString(input):
     try:
         basestring
     except NameError:
         basestring = str
-    if isinstance(inputList, basestring):
-        result = list()
-        result.append(inputList)
-        return result
+    return isinstance(input, basestring)
+
+def ensureList(inputList):
+    if isString(inputList):
+        return [inputList]
     else:
         return inputList
 
@@ -400,6 +407,24 @@ def getSensorMap(devices, device_id_dict, printIt=False):
     fieldsDictionary = {
         'ST-':
             {
+                'evt_strike.udp':
+                {
+                    # 'lightning_energy': 'energy',
+                    # 'lightning_distance': 'distance',
+                },
+                'rapid_wind.udp':
+                {
+                    'windSpeed': 'wind_speed',
+                    'windDir': 'wind_direction'
+                },
+                'obs_st.rest':
+                {
+                    # 'lightning_strike_count': 'lightning_strike_count',
+                    # 'lightning_distance': 'lightning_strike_avg_distance',
+                    'windSpeed': 'wind_avg',
+                    'windDir': 'wind_direction',
+                    'windGust': 'wind_gust',
+                },
                 'obs_st':
                 {
                     'outTemp': 'air_temperature',
@@ -408,9 +433,6 @@ def getSensorMap(devices, device_id_dict, printIt=False):
                     'lightning_strike_count': 'lightning_strike_count',
                     'lightning_distance': 'lightning_strike_avg_distance',
                     'outTempBatteryStatus': 'battery',
-                    'windSpeed': 'wind_avg',
-                    'windDir': 'wind_direction',
-                    'windGust': 'wind_gust',
                     'luminosity': 'illuminance',
                     'UV': 'uv',
                     'rain': 'rain_accumulated',
@@ -471,10 +493,17 @@ def getSensorMap(devices, device_id_dict, printIt=False):
         for packageType in fieldsDictionary[typeString]:
             fields = fieldsDictionary[typeString][packageType]
             for field in fields:
+                mapping = '{}.{}.{}'.format(fields[field], device, packageType)
                 if field in configObj['sensor_map'].dict():
-                    errors = True
-                    warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
-                configObj['sensor_map'].update({field: '{}.{}.{}'.format(fields[field], device, packageType)})
+                    existingMapping = configObj['sensor_map'][field]
+                    hasUdp = isString(existingMapping) and (packageType.endswith('.udp') or existingMapping.endswith('.udp'))
+                    hasRest = isString(existingMapping) and (packageType.endswith('.rest') or existingMapping.endswith('rest'))
+                    if hasUdp and hasRest:
+                        mapping = [existingMapping, mapping]
+                    else:
+                        errors = True
+                        warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
+                configObj['sensor_map'].update({field: mapping})
         if errors:
             warning('Mapping errors occurred. You should probably configure a manual sensor-map', printIt)
     return configObj['sensor_map']
@@ -532,7 +561,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genLoopPackets(self):
         for udp_packet in self.gen_udp_packets():
             m2 = parseUDPPacket(udp_packet)
-            m3 = sendMyLoopPacket(m2, self._sensor_map, False)
+            m3 = mapToWeewxPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
                 logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                 yield m3
@@ -578,7 +607,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
                 for observation in parseRestPacket(packet, self._device_id_dict):
-                    m3 = sendMyLoopPacket(observation, self._sensor_map, True)
+                    m3 = mapToWeewxPacket(observation, self._sensor_map, True)
                     if len(m3) > 3:
                         logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         if self._archive_interval <= 60:
@@ -709,7 +738,10 @@ if __name__ == '__main__':
             print('')
             print('    [[sensor_map]]')
             for key in sensor_map.keys():
-                print('        {} = {}'.format(key, sensor_map[key]))
+                if isinstance(sensor_map[key], list):
+                    print('        {} = {}'.format(key, ', '.join(sensor_map[key])))
+                else:
+                    print('        {} = {}'.format(key, sensor_map[key]))
             print('')
             print('You can copy the above into your weewx.conf file directly after your [WeatherFlowUDP] section')
             exit(0)
