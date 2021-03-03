@@ -245,7 +245,7 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
 
     return packet
 
-def parseUDPPacket(pkt):
+def parseUDPPacket(pkt, calculator = None):
     packet = dict()
     if 'serial_number' in pkt:
         if 'type' in pkt:
@@ -258,6 +258,11 @@ def parseUDPPacket(pkt):
                 packet['time_epoch'] = pkt['obs'][0][0]
                 for key, value in zip(fields[pkt['type']], pkt['obs'][0]):
                     packet[key + "." + pkt_label] = value
+                    if key == "battery" and pkt['type'] == 'obs_st' and calculator:
+                        calculator.addVoltage(value)
+                        mode = calculator.getMode()
+                        if mode != None:
+                            packet["battery_mode." + pkt_label] = mode
 
             elif pkt['type'] == 'rapid_wind':
                 packet['time_epoch'] = pkt['ob'][0]
@@ -354,7 +359,7 @@ def readDataFromWF(start, token, devices, device_dict, batch_size):
         else:
             start = end if lastTimestamp == None else lastTimestamp + 1
 
-def parseRestPacket(pkt, device_id_dict):
+def parseRestPacket(pkt, device_id_dict, calculator):
     label_list = list()
     pos = 0
     for device_id in pkt['device_ids']:        
@@ -372,6 +377,11 @@ def parseRestPacket(pkt, device_id_dict):
             packet['time_epoch'] = observation[0]
             for key, value in zip(fields_list[pos], observation):
                 packet[key + "." + label_list[pos]] = value
+                if key == "battery" and label_list[pos].endswith(".obs_st"):
+                    calculator.addVoltage(value)
+                    mode = calculator.getMode()
+                    if mode != None:
+                        packet["battery_mode." + label_list[pos]] = mode
             pos += 1
         yield packet
 
@@ -436,7 +446,8 @@ def getSensorMap(devices, device_id_dict, printIt=False):
                     'luminosity': 'illuminance',
                     'UV': 'uv',
                     'rain': 'rain_accumulated',
-                    'radiation': 'solar_radiation'
+                    'radiation': 'solar_radiation',
+                    'batteryStatus1': 'battery_mode'
                 },
                 'device_status':
                 {
@@ -548,6 +559,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._archive_delay = int(std_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
+        self._calculator = BatteryModeCalculator()
 
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
@@ -560,7 +572,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def genLoopPackets(self):
         for udp_packet in self.gen_udp_packets():
-            m2 = parseUDPPacket(udp_packet)
+            m2 = parseUDPPacket(udp_packet, self._calculator)
             m3 = mapToWeewxPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
                 logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
@@ -606,7 +618,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
-                for observation in parseRestPacket(packet, self._device_id_dict):
+                for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
                     m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
                     if len(m3) > 3:
                         logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
@@ -677,7 +689,46 @@ class ArchivePeriod:
         
     def getRecord(self):
         return self._accumulator.getRecord()
-        
+
+class BatteryModeCalculator:
+    def __init__(self):
+        self._list = list()
+
+    def addVoltage(self, value):
+        self._list.append(value)
+        if len(self._list) > 10:
+            self._list.pop(0)
+
+    def __isCharging(self):
+        if len(self._list) == 10:
+            firstValue = sum(self._list[0:5])
+            secondValue = sum(self._list[5:10])
+            return secondValue > firstValue
+        else:
+            return False
+
+    def getMode(self):
+        if len(self._list) == 0:
+            return None
+        currentValue = sum(self._list[-5:]) / len(self._list[-5:])
+        if self.__isCharging():
+            if currentValue >= 2.455:
+                return 0
+            elif currentValue >= 2.41:
+                return 1
+            elif currentValue >= 2.375:
+                return 2
+            else:
+                return 3
+        else:
+            if currentValue <= 2.355:
+                return 3
+            elif currentValue <= 2.39:
+                return 2
+            elif currentValue <= 2.415:
+                return 1
+            else:
+                return 0        
 
 if __name__ == '__main__':
     import optparse
