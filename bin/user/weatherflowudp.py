@@ -157,7 +157,7 @@ import calendar
 from configobj import ConfigObj
 
 # Default settings...
-DRIVER_VERSION = "1.12"
+DRIVER_VERSION = "1.13"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
 
@@ -221,26 +221,31 @@ fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'wind_sample_interval', 'station_pressure', 'air_temperature', 'relative_humidity', 'illuminance', 'uv', 'solar_radiation', 'rain_accumulated', 'precipitation_type', 'lightning_strike_avg_distance', 'lightning_strike_count', 'battery', 'report_interval')
 
 def loader(config_dict, engine):
-    return WeatherFlowUDPDriver(**config_dict[DRIVER_NAME])
+    return WeatherFlowUDPDriver(config_dict)
 
-
-def sendMyLoopPacket(pkt,sensor_map, add_interval):
+def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
     packet = dict()
     if 'time_epoch' in pkt:
         packet = {
             'dateTime': pkt['time_epoch'],
             'usUnits' : weewx.METRICWX
         }
-    if add_interval:
-        packet.update({'interval':1})
+
+    if isRest:
+        packet.update({'interval':interval})
 
     for pkt_weewx, pkt_label in sensor_map.items():
-        if pkt_label.replace("-","_") in pkt:
-           packet[pkt_weewx] = pkt[pkt_label.replace("-","_")]
+        for label in ensureList(pkt_label):
+            if label.endswith('.rest') and isRest:
+                label = label[:-5]
+            elif label.endswith('.udp') and not isRest:
+                label = label[:-4]
+            if label.replace("-","_") in pkt:
+                packet[pkt_weewx] = pkt[label.replace("-","_")]
 
     return packet
 
-def parseUDPPacket(pkt):
+def parseUDPPacket(pkt, calculator = None):
     packet = dict()
     if 'serial_number' in pkt:
         if 'type' in pkt:
@@ -253,6 +258,11 @@ def parseUDPPacket(pkt):
                 packet['time_epoch'] = pkt['obs'][0][0]
                 for key, value in zip(fields[pkt['type']], pkt['obs'][0]):
                     packet[key + "." + pkt_label] = value
+                    if key == "battery" and pkt['type'] == 'obs_st' and calculator:
+                        calculator.addVoltage(value)
+                        mode = calculator.getMode()
+                        if mode != None:
+                            packet["battery_mode." + pkt_label] = mode
 
             elif pkt['type'] == 'rapid_wind':
                 packet['time_epoch'] = pkt['ob'][0]
@@ -349,7 +359,7 @@ def readDataFromWF(start, token, devices, device_dict, batch_size):
         else:
             start = end if lastTimestamp == None else lastTimestamp + 1
 
-def parseRestPacket(pkt, device_id_dict):
+def parseRestPacket(pkt, device_id_dict, calculator):
     label_list = list()
     pos = 0
     for device_id in pkt['device_ids']:        
@@ -367,6 +377,11 @@ def parseRestPacket(pkt, device_id_dict):
             packet['time_epoch'] = observation[0]
             for key, value in zip(fields_list[pos], observation):
                 packet[key + "." + label_list[pos]] = value
+                if key == "battery" and label_list[pos].endswith(".obs_st"):
+                    calculator.addVoltage(value)
+                    mode = calculator.getMode()
+                    if mode != None:
+                        packet["battery_mode." + label_list[pos]] = mode
             pos += 1
         yield packet
 
@@ -385,35 +400,42 @@ def getDevices(devicesList, devices, token, printIt=False):
         raise DriverException("None of the configured devices ({}) were available for the given API-token. Aborting.".format(', '.join(devicesList)))
     return result
 
-def ensureList(inputList):
+def isString(input):
     try:
         basestring
     except NameError:
         basestring = str
-    if isinstance(inputList, basestring):
-        result = list()
-        result.append(inputList)
-        return result
+    return isinstance(input, basestring)
+
+def ensureList(inputList):
+    if isString(inputList):
+        return [inputList]
     else:
         return inputList
 
 def getSensorMap(devices, device_id_dict, printIt=False):
-    configObj = ConfigObj()
-    configObj['sensor_map'] = {}
-    devices.reverse()
-    for device in devices:
-        if device not in device_id_dict.values():
-            warning('Unknown device {}, skipping'.format(device), printIt)
-            continue
-        typeString = device[0:3]
-        packageTypes = {
-            'ST-':'obs_st',
-            'AR-':'obs_air',
-            'SK-':'obs_sky',
-            'HB-':None
-        }
-        fieldsDictionary = {
-            'ST-':
+    fieldsDictionary = {
+        'ST-':
+            {
+                'evt_strike.udp':
+                {
+                    # 'lightning_energy': 'energy',
+                    # 'lightning_distance': 'distance',
+                },
+                'rapid_wind.udp':
+                {
+                    'windSpeed': 'wind_speed',
+                    'windDir': 'wind_direction'
+                },
+                'obs_st.rest':
+                {
+                    # 'lightning_strike_count': 'lightning_strike_count',
+                    # 'lightning_distance': 'lightning_strike_avg_distance',
+                    'windSpeed': 'wind_avg',
+                    'windDir': 'wind_direction',
+                    'windGust': 'wind_gust',
+                },
+                'obs_st':
                 {
                     'outTemp': 'air_temperature',
                     'outHumidity': 'relative_humidity',
@@ -421,15 +443,21 @@ def getSensorMap(devices, device_id_dict, printIt=False):
                     'lightning_strike_count': 'lightning_strike_count',
                     'lightning_distance': 'lightning_strike_avg_distance',
                     'outTempBatteryStatus': 'battery',
-                    'windSpeed': 'wind_avg',
-                    'windDir': 'wind_direction',
-                    'windGust': 'wind_gust',
                     'luminosity': 'illuminance',
                     'UV': 'uv',
                     'rain': 'rain_accumulated',
-                    'radiation': 'solar_radiation'
+                    'radiation': 'solar_radiation',
+                    'batteryStatus1': 'battery_mode'
                 },
-            'AR-':
+                'device_status':
+                {
+                    'signal1': 'rssi',
+                    'signal2': 'hub_rssi'
+                }
+            },
+        'AR-':
+            {
+                'obs_air':
                 {
                     'outTemp': 'air_temperature',
                     'outHumidity': 'relative_humidity',
@@ -437,8 +465,11 @@ def getSensorMap(devices, device_id_dict, printIt=False):
                     'lightning_strike_count': 'lightning_strike_count',
                     'lightning_distance': 'lightning_strike_avg_distance',
                     'outTempBatteryStatus': 'battery'
-                },
-            'SK-':
+                }
+            },
+        'SK-':
+            {
+                'obs_sky':
                 {
                     'windSpeed': 'wind_avg',
                     'windDir': 'wind_direction',
@@ -448,19 +479,42 @@ def getSensorMap(devices, device_id_dict, printIt=False):
                     'rain': 'rain_accumulated',
                     'windBatteryStatus': 'battery',
                     'radiation': 'solar_radiation'
-                },
-            'HB-': { }
-        }
+                }
+            },
+        'HB-':
+            {
+                'hub_status':
+                {
+                    'signal3': 'rssi'
+                }
+            }
+    }
+    configObj = ConfigObj()
+    configObj['sensor_map'] = {}
+    devices.reverse()
+    for device in devices:
+        if device not in device_id_dict.values():
+            warning('Unknown device {}, skipping'.format(device), printIt)
+            continue
+        typeString = device[0:3]
         if typeString not in fieldsDictionary:
             warning('Unknown type for device {}' % device, printIt)
             continue
-        fields = fieldsDictionary[typeString]
         errors = False
-        for field in fields:
-            if field in configObj['sensor_map'].dict():
-                errors = True
-                warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
-            configObj['sensor_map'].update({field: '{}.{}.{}'.format(fields[field], device, packageTypes[typeString])})
+        for packageType in fieldsDictionary[typeString]:
+            fields = fieldsDictionary[typeString][packageType]
+            for field in fields:
+                mapping = '{}.{}.{}'.format(fields[field], device, packageType)
+                if field in configObj['sensor_map'].dict():
+                    existingMapping = configObj['sensor_map'][field]
+                    hasUdp = isString(existingMapping) and (packageType.endswith('.udp') or existingMapping.endswith('.udp'))
+                    hasRest = isString(existingMapping) and (packageType.endswith('.rest') or existingMapping.endswith('rest'))
+                    if hasUdp and hasRest:
+                        mapping = [existingMapping, mapping]
+                    else:
+                        errors = True
+                        warning('Cannot map field {} to {} as it is already set to \'{}\''.format(field, device, configObj['sensor_map'][field]), printIt)
+                configObj['sensor_map'].update({field: mapping})
         if errors:
             warning('Mapping errors occurred. You should probably configure a manual sensor-map', printIt)
     return configObj['sensor_map']
@@ -485,8 +539,10 @@ def warning(warning, printIt):
 
 class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
-    def __init__(self, **stn_dict):
+    def __init__(self, all_dict):
         loginf('driver version is %s' % DRIVER_VERSION)
+        stn_dict = all_dict[DRIVER_NAME]
+        std_dict = all_dict['StdArchive']
         self._log_raw_packets = tobool(stn_dict.get('log_raw_packets', False))
         self._udp_address = stn_dict.get('udp_address', '<broadcast>')
         self._udp_port = int(stn_dict.get('udp_port', 50222))
@@ -498,8 +554,12 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._device_id_dict, self._device_dict = getStationDevices(self._token)
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
+        self._archive_interval = int(std_dict.get('archive_interval', 60))
+        self._loopHiLo = tobool(std_dict.get('loop_hilo', True))
+        self._archive_delay = int(std_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
+        self._calculator = BatteryModeCalculator()
 
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
@@ -512,8 +572,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def genLoopPackets(self):
         for udp_packet in self.gen_udp_packets():
-            m2 = parseUDPPacket(udp_packet)
-            m3 = sendMyLoopPacket(m2, self._sensor_map, False)
+            m2 = parseUDPPacket(udp_packet, self._calculator)
+            m3 = mapToWeewxPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
                 logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                 yield m3
@@ -552,17 +612,123 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genStartupRecords(self, since_ts):
         if since_ts == None:
             since_ts = int(time.time()) - 365 * 24 * 60 * 60
+            
+        archivePeriod = None
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
-                for observation in parseRestPacket(packet, self._device_id_dict):
-                    m3 = sendMyLoopPacket(observation, self._sensor_map, True)
+                for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
+                    m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
                     if len(m3) > 3:
                         logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                        yield m3
+                        if self._archive_interval <= 60:
+                            yield m3
+                        else:
+                            # Use an accumulator and treat REST API data like loop data
+                            if not archivePeriod:
+                                # init archivePeriod
+                                archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
+                            
+                            if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
+                                archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
+                            
+                            # Try adding the API packet to the existing accumulator. If the
+                            # timestamp is outside the timespan of the accumulator, an exception
+                            # will be thrown
+                            try:
+                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
+                            except weewx.accum.OutOfSpan:
+                                # Shuffle accumulators:
+                                archivePeriod.startNextArchiveInterval()
+                                # Try again:
+                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
+                
+                            archive_record = archivePeriod.getPreviousRecord()
+                            if archive_record:
+                                logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
+                                yield archive_record
+            if archivePeriod:
+                archive_record = archivePeriod.getRecord()
+                if archive_record:
+                    # return record from last processed accumulator 
+                    yield archive_record
         else:
             loginf('Skipped fetching from REST API')
+
+class ArchivePeriod:
+    def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
+        self._start_archive_period_ts = start_archive_period_ts
+        self._archive_interval = archive_interval
+        self._archive_delay = archive_delay
+        self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
+        if (self._end_archive_period_ts > time.time()):
+                self._end_archive_period_ts = int(time.time())
+        self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
+        self._accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts))
+        self._old_accumulator = None
+        
+    def startNextArchiveInterval(self, start_archive_period_ts):
+        self._start_archive_period_ts = start_archive_period_ts
+        self._end_archive_period_ts = self._start_archive_period_ts + self._archive_interval
+        if (self._end_archive_period_ts > time.time()):
+            self_end_archive_period_ts = int(time.time())
+        self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
+            
+        (self._old_accumulator, self._accumulator) = \
+        (self._accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
+    
+    def addRecord(self, record, add_hilo=True):
+        self._accumulator.addRecord(record, add_hilo)
+    
+    def getPreviousRecord(self):
+        if (self._old_accumulator):
+            record = self._old_accumulator.getRecord()
+            self._old_accumulator = None
+            return record
+        
+    def getRecord(self):
+        return self._accumulator.getRecord()
+
+class BatteryModeCalculator:
+    def __init__(self):
+        self._list = list()
+
+    def addVoltage(self, value):
+        self._list.append(value)
+        if len(self._list) > 10:
+            self._list.pop(0)
+
+    def __isCharging(self):
+        if len(self._list) == 10:
+            firstValue = sum(self._list[0:5])
+            secondValue = sum(self._list[5:10])
+            return secondValue > firstValue
+        else:
+            return False
+
+    def getMode(self):
+        if len(self._list) == 0:
+            return None
+        currentValue = sum(self._list[-5:]) / len(self._list[-5:])
+        if self.__isCharging():
+            if currentValue >= 2.455:
+                return 0
+            elif currentValue >= 2.41:
+                return 1
+            elif currentValue >= 2.375:
+                return 2
+            else:
+                return 3
+        else:
+            if currentValue <= 2.355:
+                return 3
+            elif currentValue <= 2.39:
+                return 2
+            elif currentValue <= 2.415:
+                return 1
+            else:
+                return 0        
 
 if __name__ == '__main__':
     import optparse
@@ -620,11 +786,14 @@ if __name__ == '__main__':
             devices = getDevices(devicesList, device_dict.keys(), options.token, True)
             sensor_map = getSensorMap(devices, device_id_dict, True)
             print('Sensor map:')
-            print()
+            print('')
             print('    [[sensor_map]]')
             for key in sensor_map.keys():
-                print('        {} = {}'.format(key, sensor_map[key]))
-            print()
+                if isinstance(sensor_map[key], list):
+                    print('        {} = {}'.format(key, ', '.join(sensor_map[key])))
+                else:
+                    print('        {} = {}'.format(key, sensor_map[key]))
+            print('')
             print('You can copy the above into your weewx.conf file directly after your [WeatherFlowUDP] section')
             exit(0)
         except DriverException as ex:
@@ -639,7 +808,8 @@ if __name__ == '__main__':
             'port': options.port,
             'timeout': options.timeout,
             'share_socket': options.share_socket,
-        }
+        },
+        'StdArchive' : { }
     }
 
     device = loader(config_dict, None)
