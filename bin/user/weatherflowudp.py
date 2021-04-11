@@ -150,6 +150,7 @@ from socket import *
 import weewx.units
 import weewx.drivers
 import weewx.wxformulas
+import weewx.accum
 from weeutil.weeutil import tobool
 import requests
 from datetime import datetime
@@ -230,9 +231,33 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
             'dateTime': pkt['time_epoch'],
             'usUnits' : weewx.METRICWX
         }
+    
+    lightning_packet = None
 
     if isRest:
         packet.update({'interval':interval})
+
+    # Correct distance value for lightning strikes when count was 0
+    weatherflow_lightning_strike_count_key = None
+    weatherflow_lightning_strike_avg_distance_key = None
+    for weatherflow_key in pkt.keys():
+        if weatherflow_key.find("lightning_strike_count") > -1:
+            weatherflow_lightning_strike_count_key = weatherflow_key
+        elif weatherflow_key.find("lightning_strike_avg_distance") > -1:
+            weatherflow_lightning_strike_avg_distance_key = weatherflow_key
+    
+    if weatherflow_lightning_strike_count_key and weatherflow_lightning_strike_avg_distance_key:
+        lightning_weight = pkt[weatherflow_lightning_strike_count_key]
+        lightning_packet = dict()
+        lightning_packet = {
+            'dateTime': pkt['time_epoch'],
+            'usUnits' : weewx.METRICWX,
+            'lightningPacketWeight' : lightning_weight
+        }
+        if pkt[weatherflow_lightning_strike_count_key] == 0:
+            # If there was no strike the distance should be None and not 0 as used by weatherflow
+            # Perhaps the weight of 0 for such events would be enough but a value of None make things clearer
+            pkt[weatherflow_lightning_strike_avg_distance_key] = None
 
     for pkt_weewx, pkt_label in sensor_map.items():
         for label in ensureList(pkt_label):
@@ -241,9 +266,14 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
             elif label.endswith('.udp') and not isRest:
                 label = label[:-4]
             if label.replace("-","_") in pkt:
-                packet[pkt_weewx] = pkt[label.replace("-","_")]
-
-    return packet
+                if lightning_packet and label.find("strike") > -1 and isRest and interval != 1:
+                    # This is a lightning strike event which has to be handled weighted when using an accumulator
+                    # This only affects REST data, not UDP data, because weatherflow does not send cumulative strikes via UDP                        
+                    lightning_packet[pkt_weewx] = pkt[label.replace("-","_")]
+                else: 
+                    packet[pkt_weewx] = pkt[label.replace("-","_")]
+    
+    return packet, lightning_packet    
 
 def parseUDPPacket(pkt, calculator = None):
     packet = dict()
@@ -573,7 +603,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genLoopPackets(self):
         for udp_packet in self.gen_udp_packets():
             m2 = parseUDPPacket(udp_packet, self._calculator)
-            m3 = mapToWeewxPacket(m2, self._sensor_map, False)
+            m3, m3_lightning = mapToWeewxPacket(m2, self._sensor_map, False)
             if len(m3) > 2:
                 logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                 yield m3
@@ -619,35 +649,37 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
                 for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
-                    m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
-                    if len(m3) > 3:
-                        logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                        if self._archive_interval <= 60:
-                            yield m3
-                        else:
-                            # Use an accumulator and treat REST API data like loop data
-                            if not archivePeriod:
-                                # init archivePeriod
-                                archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
-                            
-                            if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
-                                archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
-                            
-                            # Try adding the API packet to the existing accumulator. If the
-                            # timestamp is outside the timespan of the accumulator, an exception
-                            # will be thrown
-                            try:
-                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
-                            except weewx.accum.OutOfSpan:
-                                # Shuffle accumulators:
-                                archivePeriod.startNextArchiveInterval()
-                                # Try again:
-                                archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
-                
-                            archive_record = archivePeriod.getPreviousRecord()
-                            if archive_record:
-                                logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
-                                yield archive_record
+                    m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
+                    m3_array = [m3_non_lightning, m3_lightning]
+                    for m3 in m3_array:
+                        if m3 and len(m3) > 3:
+                            logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                            if self._archive_interval <= 60:
+                                yield m3
+                            else:
+                                # Use an accumulator and treat REST API data like loop data
+                                if not archivePeriod:
+                                    # init archivePeriod
+                                    archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
+                                
+                                if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
+                                    archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
+                                
+                                # Try adding the API packet to the existing accumulator. If the
+                                # timestamp is outside the timespan of the accumulator, an exception
+                                # will be thrown
+                                try:
+                                    archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
+                                except weewx.accum.OutOfSpan:
+                                    # Shuffle accumulators:
+                                    archivePeriod.startNextArchiveInterval()
+                                    # Try again:
+                                    archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
+                    
+                                archive_record = archivePeriod.getPreviousRecord()
+                                if archive_record:
+                                    logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
+                                    yield archive_record
             if archivePeriod:
                 archive_record = archivePeriod.getRecord()
                 if archive_record:
@@ -679,7 +711,10 @@ class ArchivePeriod:
         (self._accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
     
     def addRecord(self, record, add_hilo=True):
-        self._accumulator.addRecord(record, add_hilo)
+        weight = 1
+        if "lightningPacketWeight" in record:
+            weight = record.pop("lightningPacketWeight")
+        self._accumulator.addRecord(record, add_hilo,weight)
     
     def getPreviousRecord(self):
         if (self._old_accumulator):
