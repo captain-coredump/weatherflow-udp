@@ -639,54 +639,59 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         finally:
             sock.close()
 
+    def convertREST2weewx(self, packet):
+        archivePeriod = None
+        for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
+            m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
+            m3_array = [m3_non_lightning, m3_lightning]
+            for m3 in m3_array:
+                if m3 and len(m3) > 3:
+                    logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                    if self._archive_interval <= 60:
+                        yield m3
+                    else:
+                        # Use an accumulator and treat REST API data like loop data
+                        if not archivePeriod:
+                            # init archivePeriod
+                            archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
+                        
+                        if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
+                            archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
+                        
+                        # Try adding the API packet to the existing accumulator. If the
+                        # timestamp is outside the timespan of the accumulator, an exception
+                        # will be thrown
+                        try:
+                            archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
+                        except weewx.accum.OutOfSpan:
+                            # Shuffle accumulators:
+                            archivePeriod.startNextArchiveInterval()
+                            # Try again:
+                            archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
+            
+                        archive_record = archivePeriod.getPreviousRecord()
+                        if archive_record:
+                            logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
+                            yield archive_record
+        if archivePeriod:
+            archive_record = archivePeriod.getRecord()
+            if archive_record:
+                # return record from last processed accumulator 
+                yield archive_record
+
     def genStartupRecords(self, since_ts):
         if since_ts == None:
             since_ts = int(time.time()) - 365 * 24 * 60 * 60
-            
-        archivePeriod = None
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
             for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
-                for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
-                    m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
-                    m3_array = [m3_non_lightning, m3_lightning]
-                    for m3 in m3_array:
-                        if m3 and len(m3) > 3:
-                            logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                            if self._archive_interval <= 60:
-                                yield m3
-                            else:
-                                # Use an accumulator and treat REST API data like loop data
-                                if not archivePeriod:
-                                    # init archivePeriod
-                                    archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
-                                
-                                if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
-                                    archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
-                                
-                                # Try adding the API packet to the existing accumulator. If the
-                                # timestamp is outside the timespan of the accumulator, an exception
-                                # will be thrown
-                                try:
-                                    archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
-                                except weewx.accum.OutOfSpan:
-                                    # Shuffle accumulators:
-                                    archivePeriod.startNextArchiveInterval()
-                                    # Try again:
-                                    archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
-                    
-                                archive_record = archivePeriod.getPreviousRecord()
-                                if archive_record:
-                                    logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
-                                    yield archive_record
-            if archivePeriod:
-                archive_record = archivePeriod.getRecord()
-                if archive_record:
-                    # return record from last processed accumulator 
+                for archive_record in self.convertREST2weewx(packet):
                     yield archive_record
         else:
             loginf('Skipped fetching from REST API')
+            
+
 
 class ArchivePeriod:
     def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
