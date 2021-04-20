@@ -8,7 +8,12 @@ import os.path
 import configobj
 import sys
 import time
-import user.weatherflowudp
+import weewx
+from user import weatherflowudp
+from weewx import engine
+from weewx.engine import StdArchive
+import weeutil
+from weewx.engine import BreakLoop
 #import user.weatherflowudp.WeatherFlowUDPDriver
 
 
@@ -31,44 +36,33 @@ class Test(unittest.TestCase):
             print("Error while parsing configuration file %s" % config_path, file=sys.stderr)
             raise
 
+        self.driver = weatherflowudp.WeatherFlowUDPDriver(self.config_dict)
+        # get device_id - assumes that only one device is configured in test.conf!
+        for k in self.driver._device_id_dict.keys():
+            if self.driver._device_id_dict[k] == self.config_dict["WeatherFlowUDP"]["devices"]:
+                self.device_id = k
+                self.device_name = self.driver._device_id_dict[k]
+                break
+            
+        self.obs1 = [[1617299160, 0, 0, 0, 0, 3, 964, 18.8, 45, 26, 0, 0, 0, 0, 21, 2, 2.73, 1, 0, None, None, 0]]
+        self.obs2 = [[1617299220, 0, 0, 0, 0, 3, 964, 18.7, 45, 19, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
+        self.obs3 = [[1617299280, 0, 0.2, 1.03, 114, 3, 964, 18.7, 45, 14, 0, 0, 0, 0, 20, 2, 2.73, 1, 0, None, None, 0]]
+        self.obs4 = [[1617299340, 0, 0.09, 0.8, 138, 3, 964.1, 18.6, 45, 11, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
+        self.obs5 = [[1617299400, 0, 0.02, 0.31, 222, 3, 964.1, 18.6, 45, 8, 0, 0, 0, 0, 24, 1, 2.73, 1, 0, None, None, 0]]
+
+        self.obs6 = [[1617299460, 0, 0, 0, 0, 3, 964.1, 18.6, 45, 6, 0, 0, 0, 0, 0, 0, 2.73, 1, 0, None, None, 0]]
+        self.obs7 = [[1617299520, 0, 0.11, 0.85, 98, 3, 964.1, 18.6, 46, 4, 0, 0, 0, 0, 0, 0, 2.73, 1, 0, None, None, 0]]
+        self.obs8 = [[1617299580, 0, 0.31, 1.03, 92, 3, 964.2, 18.5, 46, 5, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
+        self.obs9 = [[1617299640, 0, 0.1, 0.8, 98, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 22, 1, 2.73, 1, 0, None, None, 0]]
+        self.obs10 = [[1617299700, 0, 0.18, 0.8, 109, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 33, 1, 2.73, 1, 0, None, None, 0]]
+  
+        self.end_archive_period_ts = 1617299400
 
     def tearDown(self):
         pass
 
-
-    def testUDP(self):
-        driver = user.weatherflowudp.WeatherFlowUDPDriver(self.config_dict)
-        for archive_record in driver.genStartupRecords(int(time.time()-330)):
-            print(archive_record)
+    def checkResult(self, archive_record):
         
-        
-    def testUDPCalculations(self):
-        driver = user.weatherflowudp.WeatherFlowUDPDriver(self.config_dict)
-        
-        obs1 = [[1617299160, 0, 0, 0, 0, 3, 964, 18.8, 45, 26, 0, 0, 0, 0, 21, 2, 2.73, 1, 0, None, None, 0]]
-        obs2 = [[1617299220, 0, 0, 0, 0, 3, 964, 18.7, 45, 19, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
-        obs3 = [[1617299280, 0, 0.2, 1.03, 114, 3, 964, 18.7, 45, 14, 0, 0, 0, 0, 20, 2, 2.73, 1, 0, None, None, 0]]
-        obs4 = [[1617299340, 0, 0.09, 0.8, 138, 3, 964.1, 18.6, 45, 11, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
-        obs5 = [[1617299400, 0, 0.02, 0.31, 222, 3, 964.1, 18.6, 45, 8, 0, 0, 0, 0, 24, 1, 2.73, 1, 0, None, None, 0]]
-        
-        obs6 = [[1617299460, 0, 0, 0, 0, 3, 964.1, 18.6, 45, 6, 0, 0, 0, 0, 0, 0, 2.73, 1, 0, None, None, 0]]
-        obs7 = [[1617299520, 0, 0.11, 0.85, 98, 3, 964.1, 18.6, 46, 4, 0, 0, 0, 0, 0, 0, 2.73, 1, 0, None, None, 0]]
-        obs8 = [[1617299580, 0, 0.31, 1.03, 92, 3, 964.2, 18.5, 46, 5, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
-        obs9 = [[1617299640, 0, 0.1, 0.8, 98, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 22, 1, 2.73, 1, 0, None, None, 0]]
-        obs10 = [[1617299700, 0, 0.18, 0.8, 109, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 33, 1, 2.73, 1, 0, None, None, 0]]
-
-        # get device_id - assumes that only one device is configured in test.conf!
-        for k in driver._device_id_dict.keys():
-            if driver._device_id_dict[k] == self.config_dict["WeatherFlowUDP"]["devices"]:
-                device_id = k
-                break
-  
-        result = dict()
-        result['device_ids'] = [device_id]
-        result['types'] = ['obs_st']
-        result['obs'] = (obs1, obs2, obs3, obs4, obs5, obs6, obs7, obs8, obs9, obs10)
-        
-        for archive_record in driver.convertREST2weewx(result):
             if (archive_record["dateTime"] == 1617299400):
                 assert round(archive_record["interval"],0) == 5
                 assert round(archive_record["outTemp"],2) == 18.68
@@ -102,9 +96,107 @@ class Test(unittest.TestCase):
             else:
                 # invalid timestamp
                 assert False
-                        
+
+    def ztestRESTConnection(self):
+        driver = weatherflowudp.WeatherFlowUDPDriver(self.config_dict)
+        for archive_record in driver.genStartupRecords(int(time.time()-330)):
+            print(archive_record)
+
+        pass        
+        
+    def ztestRESTData(self):
+        
+        result = dict()
+        result['device_ids'] = [self.device_id]
+        result['types'] = ['obs_st']
+        result['obs'] = (self.obs1, self.obs2, self.obs3, self.obs4, self.obs5, self.obs6,
+                          self.obs7, self.obs8, self.obs9, self.obs10)
+        for archive_record in self.driver.convertREST2weewx(result):
+            self.checkResult(archive_record)
+    
+    def new_archive_record(self, event):
+        self.checkResult(event)
+        
+    def testLoopPacket(self):
+        
+        test_engine = engine.StdEngine(self.config_dict)
+        test_engine.console = TestConsole(self)
+        try:
+            test_engine.run()
+        except EndLoop:
+            pass
+        
+class TestArchive(StdArchive):
+    """Service that archives LOOP and archive data in the SQL databases."""
+    
+    def __init__(self, engine, config_dict):
+        super(TestArchive, self).__init__(engine, config_dict)
+    
+    def _catchup(self, generator):
+        pass
+        
+    def new_archive_record(self, event):
+        """Called when a new archive record has arrived.
+        Put it in the archive database."""
+        self.engine.console.checkResult(event.record)
+
+    def _software_catchup(self):
+        # Extract a record out of the old accumulator. 
+        record = self.old_accumulator.getRecord()
+        # Add the archive interval
+        record['interval'] = self.archive_interval / 60
+        # Send out an event with the new record:
+        self.engine.dispatchEvent(weewx.Event(weewx.NEW_ARCHIVE_RECORD,
+                                              record=record,
+                                              origin='software'))
+
+class TestConsole(object):
+    """A dummy console, used to offer an archive_interval."""
+
+    def __init__(self, test_instance):
+        try:
+            self.archive_interval = int(test_instance.config_dict['StdArchive']['archive_interval'])
+        except KeyError:
+            self.archive_interval = 300
+        self.test_instance = test_instance    
+        
+    def genStartupRecords(self, since_ts):
+        pass
+    
+    def getTime(self):
+        return 1617299140    
+    
+    def checkResult(self,archive_record):
+        self.test_instance.checkResult(archive_record)
+    
+    def genLoopPackets(self):
+        m1_list = ({'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs1, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs2, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs3, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs4, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs5, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs6, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs7, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs8, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs9, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs10, 'firmware_revision': 134},
+                )
+        for m1 in m1_list:
+            m2 = weatherflowudp.parseUDPPacket(m1, self.test_instance.driver._calculator)
+            m3, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False)
+            if len(m3) > 2:
+                yield m3
+            else:
+                raise Exception("Could not convert m2 to m3")
+        
+        raise EndLoop
+
+    def closePort(self):
         pass
 
+class EndLoop(Exception):
+    """Exception to quit the test loop"""
+    
 if __name__ == "__main__":
     #import sys;sys.argv = ['', 'Test.testName']
     unittest.main()
