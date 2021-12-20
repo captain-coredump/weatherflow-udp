@@ -256,7 +256,7 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
         }
         if pkt[weatherflow_lightning_strike_count_key] == 0:
             # If there was no strike the distance should be None and not 0 as used by weatherflow
-            # Perhaps the weight of 0 for such events would be enough but a value of None make things clearer
+            # Perhaps the weight of 0 for such events would be enough but a value of None makes things clearer
             pkt[weatherflow_lightning_strike_avg_distance_key] = None
 
     for pkt_weewx, pkt_label in sensor_map.items():
@@ -268,7 +268,9 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
             if label.replace("-","_") in pkt:
                 if lightning_packet and label.find("strike") > -1 and isRest and interval != 1:
                     # This is a lightning strike event which has to be handled weighted when using an accumulator
-                    # This only affects REST data, not UDP data, because weatherflow does not send cumulative strikes via UDP                        
+                    # We only want to treat the lightning values weighted. Therefore we have to return a weighted lightning packet and
+                    # an unweighted packet for non lightning values.
+                    # TODO: This assertion was wrong due to a defect hardware: This only affects REST data, not UDP data, because weatherflow does not send cumulative strikes via UDP                        
                     lightning_packet[pkt_weewx] = pkt[label.replace("-","_")]
                 else: 
                     packet[pkt_weewx] = pkt[label.replace("-","_")]
