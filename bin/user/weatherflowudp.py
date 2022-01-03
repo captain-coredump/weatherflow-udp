@@ -247,12 +247,12 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
             weatherflow_lightning_strike_avg_distance_key = weatherflow_key
     
     if weatherflow_lightning_strike_count_key and weatherflow_lightning_strike_avg_distance_key:
-        lightning_weight = pkt[weatherflow_lightning_strike_count_key]
+        weight = pkt[weatherflow_lightning_strike_count_key]
         lightning_packet = dict()
         lightning_packet = {
             'dateTime': pkt['time_epoch'],
             'usUnits' : weewx.METRICWX,
-            'lightningPacketWeight' : lightning_weight
+            'weight' : weight
         }
         if pkt[weatherflow_lightning_strike_count_key] == 0:
             # If there was no strike the distance should be None and not 0 as used by weatherflow
@@ -266,7 +266,7 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
             elif label.endswith('.udp') and not isRest:
                 label = label[:-4]
             if label.replace("-","_") in pkt:
-                if lightning_packet and label.find("strike") > -1 and isRest and interval != 1:
+                if lightning_packet and label.find("strike") > -1:
                     # This is a lightning strike event which has to be handled weighted when using an accumulator
                     # We only want to treat the lightning values weighted. Therefore we have to return a weighted lightning packet and
                     # an unweighted packet for non lightning values.
@@ -609,7 +609,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             if len(m3) > 2:
                 logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                 yield m3
-
+                
     def gen_udp_packets(self):
         """Yield raw UDP packets"""
         loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s and share_socket %s...'
@@ -719,8 +719,8 @@ class ArchivePeriod:
     
     def addRecord(self, record, add_hilo=True):
         weight = 1
-        if "lightningPacketWeight" in record:
-            weight = record.pop("lightningPacketWeight")
+        if "weight" in record:
+            weight = record.pop("weight")
         self._accumulator.addRecord(record, add_hilo,weight)
     
     def getPreviousRecord(self):

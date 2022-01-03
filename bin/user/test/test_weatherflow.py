@@ -12,8 +12,6 @@ import weewx
 from user import weatherflowudp
 from weewx import engine
 from weewx.engine import StdArchive
-import weeutil
-from weewx.engine import BreakLoop
 #import user.weatherflowudp.WeatherFlowUDPDriver
 
 
@@ -76,7 +74,7 @@ class Test(unittest.TestCase):
                 assert round(archive_record["radiation"],2) == 0.00
                 assert round(archive_record["UV"],2) == 0.00
                 assert round(archive_record["lightning_strike_count"],2) == 7.00
-                assert round(archive_record["lightning_distance"],2) == 26.0
+                assert round(archive_record["lightning_distance"],1) == 26.0
                 assert round(archive_record["supplyVoltage"],2) == 2.73
             elif (archive_record["dateTime"] == 1617299700):
                 assert round(archive_record["interval"],0) == 5
@@ -97,6 +95,7 @@ class Test(unittest.TestCase):
                 # invalid timestamp
                 assert False
 
+    # rename to testRESTConnection if you want to test a real REST connection
     def ztestRESTConnection(self):
         driver = weatherflowudp.WeatherFlowUDPDriver(self.config_dict)
         for archive_record in driver.genStartupRecords(int(time.time()-330)):
@@ -104,7 +103,7 @@ class Test(unittest.TestCase):
 
         pass        
         
-    def ztestRESTData(self):
+    def testRESTData(self):
         
         result = dict()
         result['device_ids'] = [self.device_id]
@@ -183,11 +182,13 @@ class TestConsole(object):
                 )
         for m1 in m1_list:
             m2 = weatherflowudp.parseUDPPacket(m1, self.test_instance.driver._calculator)
-            m3, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False)
-            if len(m3) > 2:
-                yield m3
-            else:
-                raise Exception("Could not convert m2 to m3")
+            m3_non_lightning, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False)
+            m3_array = [m3_non_lightning, m3_lightning]
+            for m3 in m3_array:
+                if len(m3) > 2:
+                    yield m3   
+                else:
+                    raise Exception("Could not convert m2 to m3")
         
         raise EndLoop
 
