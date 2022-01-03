@@ -605,11 +605,22 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
     def genLoopPackets(self):
         for udp_packet in self.gen_udp_packets():
             m2 = parseUDPPacket(udp_packet, self._calculator)
-            m3, m3_lightning = mapToWeewxPacket(m2, self._sensor_map, False)
-            if len(m3) > 2:
-                logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                yield m3
-                
+            # ignore packets immediately after the start of the hub when the hub
+            # has not been initialized with a correct dateTime treating values below 1000
+            # as obvious wrong values
+            if 'time_epoch' in m2 and m2['time_epoch'] > 1000:
+                m3_non_lightning, m3_lightning = mapToWeewxPacket(m2, self._sensor_map, False)
+                m3_array = [m3_non_lightning, m3_lightning]
+                for m3 in m3_array:
+                    if len(m3) > 2:
+                        logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        yield m3
+            else:
+                if 'time_epoch' in m2:
+                    logwrn("Ignoring packet with obviously uninitialized dateTime %s" % m2['time_epoch'])
+                else:
+                    logwrn("Ignoring packet without dateTime")
+
     def gen_udp_packets(self):
         """Yield raw UDP packets"""
         loginf('Listening for UDP broadcasts to IP address %s on port %s, with timeout %s and share_socket %s...'
