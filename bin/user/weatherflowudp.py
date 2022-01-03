@@ -612,7 +612,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 m3_non_lightning, m3_lightning = mapToWeewxPacket(m2, self._sensor_map, False)
                 m3_array = [m3_non_lightning, m3_lightning]
                 for m3 in m3_array:
-                    if len(m3) > 2:
+                    if (m3 and len(m3) > 2):
                         logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
                         yield m3
             else:

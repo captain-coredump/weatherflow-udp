@@ -54,6 +54,9 @@ class Test(unittest.TestCase):
         self.obs9 = [[1617299640, 0, 0.1, 0.8, 98, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 22, 1, 2.73, 1, 0, None, None, 0]]
         self.obs10 = [[1617299700, 0, 0.18, 0.8, 109, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 33, 1, 2.73, 1, 0, None, None, 0]]
   
+        self.strike1 = [1617299166, 38, 123]
+        self.rapid_wind1 = [1617299170, 2.5, 180]
+        
         self.end_archive_period_ts = 1617299400
 
     def tearDown(self):
@@ -163,13 +166,15 @@ class TestConsole(object):
         pass
     
     def getTime(self):
-        return 1617299140    
+        return int(time.time() + 0.5);    
     
     def checkResult(self,archive_record):
         self.test_instance.checkResult(archive_record)
     
     def genLoopPackets(self):
         m1_list = ({'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs1, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike1, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'rapid_wind', 'hub_sn': 'HB-12345678', 'ob': self.test_instance.rapid_wind1, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs2, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs3, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs4, 'firmware_revision': 134},
@@ -185,10 +190,11 @@ class TestConsole(object):
             m3_non_lightning, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False)
             m3_array = [m3_non_lightning, m3_lightning]
             for m3 in m3_array:
-                if len(m3) > 2:
-                    yield m3   
-                else:
-                    raise Exception("Could not convert m2 to m3")
+                if m3:
+                    if len(m3) > 2:
+                        yield m3   
+                    else:
+                        raise Exception("Empty packet - possible test failure")
         
         raise EndLoop
 
