@@ -746,12 +746,12 @@ if __name__ == '__main__':
                              [--hide-raw] [--hide-parsed]"""
 
     parser = optparse.OptionParser(usage=usage)
-    parser.add_option('--version', action='store_true',
+    parser.add_option('--version', '-v', action='store_true',
                       help='Display driver version')
-    parser.add_option('--address', default='255.255.255.255',
+    parser.add_option('--address', '-a', default='255.255.255.255',
                       help='UDP address to use. Default is "255.255.255.255".',
                       metavar="ADDR")
-    parser.add_option('--port', type="int", default=50222,
+    parser.add_option('--port', '-p', type="int", default=50222,
                       help='Socket port to use. Default is "50222"',
                       metavar="PORT")
     parser.add_option('--timeout', type="int", default=20,
@@ -764,10 +764,10 @@ if __name__ == '__main__':
                       help="Do not show parsed UDP packets.")
     parser.add_option('--create-sensor-map', action='store_true',
                       help="Generate a sensor-map.")
-    parser.add_option('--token',
+    parser.add_option('--token', '-t',
                       help="Provide API token for WeatherFlow API.",
                       metavar="TOKEN")
-    parser.add_option('--devices',
+    parser.add_option('--devices', '-d',
                       help='Provide devices (comma-separated) to use for the sensor-map.',
                       metavar='DEVICES', default='')
     (options, args) = parser.parse_args()
