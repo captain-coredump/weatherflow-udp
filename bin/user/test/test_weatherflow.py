@@ -53,8 +53,15 @@ class Test(unittest.TestCase):
         self.obs8 = [[1617299580, 0, 0.31, 1.03, 92, 3, 964.2, 18.5, 46, 5, 0, 0, 0, 0, 38, 1, 2.73, 1, 0, None, None, 0]]
         self.obs9 = [[1617299640, 0, 0.1, 0.8, 98, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 22, 1, 2.73, 1, 0, None, None, 0]]
         self.obs10 = [[1617299700, 0, 0.18, 0.8, 109, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 33, 1, 2.73, 1, 0, None, None, 0]]
+        self.obs11 = [[1617299760, 0, 0.18, 0.8, 109, 3, 964.2, 18.5, 48, 4, 0, 0, 0, 0, 0, 0, 2.73, 1, 0, None, None, 0]]
   
-        self.strike1 = [1617299166, 38, 123]
+        self.strike1 = [1617299140, 24, 123]
+        self.strike2 = [1617299149, 18, 123]
+        self.strike3 = [1617299186, 38, 123]
+        self.strike4 = [1617299239, 25, 123]
+        self.strike5 = [1617299245, 15, 123]
+        self.strike6 = [1617299315, 38, 123]
+        self.strike7 = [1617299368, 24, 123]
         self.rapid_wind1 = [1617299170, 2.5, 180]
         
         self.end_archive_period_ts = 1617299400
@@ -115,10 +122,7 @@ class Test(unittest.TestCase):
                           self.obs7, self.obs8, self.obs9, self.obs10)
         for archive_record in self.driver.convertREST2weewx(result):
             self.checkResult(archive_record)
-    
-    def new_archive_record(self, event):
-        self.checkResult(event)
-        
+
     def testLoopPacket(self):
         
         test_engine = engine.StdEngine(self.config_dict)
@@ -141,6 +145,8 @@ class TestArchive(StdArchive):
         """Called when a new archive record has arrived.
         Put it in the archive database."""
         self.engine.console.checkResult(event.record)
+        if (event.record["dateTime"] == 1617299400):
+            assert event.record["lightning_event_count"] == 7
 
     def _software_catchup(self):
         # Extract a record out of the old accumulator. 
@@ -154,7 +160,7 @@ class TestArchive(StdArchive):
 
 class TestConsole(object):
     """A dummy console, used to offer an archive_interval."""
-
+    
     def __init__(self, test_instance):
         try:
             self.archive_interval = int(test_instance.config_dict['StdArchive']['archive_interval'])
@@ -166,35 +172,39 @@ class TestConsole(object):
         pass
     
     def getTime(self):
-        return int(time.time() + 0.5);    
+        return 1617299101   
     
     def checkResult(self,archive_record):
         self.test_instance.checkResult(archive_record)
     
     def genLoopPackets(self):
-        m1_list = ({'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs1, 'firmware_revision': 134},
-                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike1, 'firmware_revision': 134},
+        m1_list = ({'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike1, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike2, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs1, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike3, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'rapid_wind', 'hub_sn': 'HB-12345678', 'ob': self.test_instance.rapid_wind1, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs2, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike4, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike5, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs3, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike6, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs4, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'evt_strike', 'hub_sn': 'HB-12345678', 'evt': self.test_instance.strike7, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs5, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs6, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs7, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs8, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs9, 'firmware_revision': 134},
                    {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs10, 'firmware_revision': 134},
+                   {'serial_number': self.test_instance.device_name, 'type': 'obs_st', 'hub_sn': 'HB-12345678', 'obs': self.test_instance.obs11, 'firmware_revision': 134},
                 )
         for m1 in m1_list:
             m2 = weatherflowudp.parseUDPPacket(m1, self.test_instance.driver._calculator)
             m3_non_lightning, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False)
             m3_array = [m3_non_lightning, m3_lightning]
             for m3 in m3_array:
-                if m3:
-                    if len(m3) > 2:
-                        yield m3   
-                    else:
-                        raise Exception("Empty packet - possible test failure")
+                if (m3 and len(m3) > 2):
+                    yield m3
         
         raise EndLoop
 
