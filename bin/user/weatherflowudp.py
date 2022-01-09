@@ -147,20 +147,25 @@ import time
 import sys
 from socket import *
 
+import traceback
+
 import weewx.units
 import weewx.drivers
 import weewx.wxformulas
 import weewx.accum
+from weewx.engine import StdService
 from weeutil.weeutil import tobool
 import requests
 from datetime import datetime
 import calendar
 from configobj import ConfigObj
 
-# Default settings...
+# Default settings and constants...
 DRIVER_VERSION = "1.13"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
+AUGMENT_MODE_ALWAYS = 'ALWAYS'
+AUGMENT_MODE_CONDITIONAL = 'CONDITIONAL'
 
 try:
     # Test for new-style weewx logging by trying to import weeutil.logger
@@ -346,7 +351,7 @@ def getStationDevices(token):
                 device_dict.update({device["serial_number"]:device["device_id"]})
     return device_id_dict, device_dict
 
-def readDataFromWF(start, token, devices, device_dict, batch_size):
+def readDataFromWF(start, stop, token, devices, device_dict, batch_size):
     isFinished = False
     while not isFinished: # end > calendar.timegm(datetime.utcnow().utctimetuple()):
         end = start + batch_size - 1
@@ -386,7 +391,7 @@ def readDataFromWF(start, token, devices, device_dict, batch_size):
             combinedResult['obs'].append(observationsForTimestamp)
 
         yield combinedResult
-        if end > calendar.timegm(datetime.utcnow().utctimetuple()):
+        if end > calendar.timegm(datetime.utcnow().utctimetuple()) or (stop and end > stop):
             isFinished = True
         else:
             start = end if lastTimestamp == None else lastTimestamp + 1
@@ -654,42 +659,45 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def convertREST2weewx(self, packet):
         archivePeriod = None
+        observationCount = 0
         for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
+            observationCount += 1
             m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
             m3_array = [m3_non_lightning, m3_lightning]
             for m3 in m3_array:
                 if m3 and len(m3) > 3:
                     logdbg('Import from REST %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                    if self._archive_interval <= 60:
-                        yield m3
-                    else:
-                        # Use an accumulator and treat REST API data like loop data
-                        if not archivePeriod:
-                            # init archivePeriod
-                            archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
-                        
-                        if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
-                            archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
-                        
-                        # Try adding the API packet to the existing accumulator. If the
-                        # timestamp is outside the timespan of the accumulator, an exception
-                        # will be thrown
-                        try:
-                            archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
-                        except weewx.accum.OutOfSpan:
-                            # Shuffle accumulators:
-                            archivePeriod.startNextArchiveInterval()
-                            # Try again:
-                            archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
-            
-                        archive_record = archivePeriod.getPreviousRecord()
-                        if archive_record:
-                            logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
-                            yield archive_record
+                    
+                    # Use an accumulator and treat REST API data like loop data
+                    if not archivePeriod:
+                        # init archivePeriod
+                        archivePeriod = ArchivePeriod(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval), self._archive_interval, self._archive_delay)
+                    
+                    if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
+                        archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
+                    
+                    # Try adding the API packet to the existing accumulator. If the
+                    # timestamp is outside the timespan of the accumulator, an exception
+                    # will be thrown
+                    try:
+                        archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)
+                    except weewx.accum.OutOfSpan:
+                        # Shuffle accumulators:
+                        archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
+                        # Try again:
+                        archivePeriod.addRecord(m3, add_hilo=self._loopHiLo)  
+        
+                    archive_record = archivePeriod.getPreviousRecord()
+                    if archive_record:
+                        logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
+                        archive_record['weatherFlowObservationCount'] = observationCount - 1
+                        observationCount = 1
+                        yield archive_record
         if archivePeriod:
             archive_record = archivePeriod.getRecord()
             if archive_record:
-                # return record from last processed accumulator 
+                # return record from last processed accumulator
+                archive_record['weatherFlowObservationCount'] = observationCount
                 yield archive_record
 
     def genStartupRecords(self, since_ts):
@@ -698,7 +706,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
-            for packet in readDataFromWF(since_ts + 1, self._token, self._devices, self._device_dict, self._batch_size):
+            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._batch_size):
                 for archive_record in self.convertREST2weewx(packet):
                     yield archive_record
         else:
@@ -782,6 +790,47 @@ class BatteryModeCalculator:
                 return 1
             else:
                 return 0        
+
+class WeatherflowAugmentService(StdService):
+    """Service that allows to augment archive records with data from Weatherflow REST API"""
+
+
+
+    def __init__(self, engine, config_dict):
+        # Pass the initialization information on to my superclass:
+        super(WeatherflowAugmentService, self).__init__(engine, config_dict)
+        
+        service_dict = config_dict['WeatherflowAugmentService']
+        self.driver = WeatherFlowUDPDriver(config_dict)
+        self.augment_readings = service_dict.get('augment_readings', None)
+        
+        # Bind to any new archive record events:
+        log.info("Init WeatherflowAugmentService")
+        self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
+
+        self.augmentMode = AUGMENT_MODE_CONDITIONAL
+        
+    def new_archive_record(self, event):
+        """Gets called on a new archive record event."""
+
+        if (self.augment_readings):
+            try:
+                for packet in readDataFromWF(event.record['dateTime'] - self.driver._archive_interval + 1, event.record['dateTime'] -1, self.driver._token, self.driver._devices, self.driver._device_dict, self.driver._archive_interval):
+                    for archive_record in self.driver.convertREST2weewx(packet):
+                        if (archive_record['dateTime'] == event.record['dateTime'] and 
+                            'weatherFlowObservationCount' in archive_record and
+                            archive_record['weatherFlowObservationCount'] == (self.driver._archive_interval / 60)):
+                            for augment_reading in self.augment_readings:
+                                if augment_reading in archive_record:
+                                    event.record[augment_reading] = archive_record[augment_reading]
+                                else:
+                                    log.info('Did not get value for %s fro Weatherflow REST API' % augment_reading)
+                            break
+                        else:
+                            log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete')
+            except:
+                log.error('Could not augment values with Weatherflow REST data')
+                log.error(traceback.format_exc())
 
 if __name__ == '__main__':
     import optparse
