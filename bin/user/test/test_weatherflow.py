@@ -26,11 +26,11 @@ class Test(unittest.TestCase):
 
         try:
             self.config_dict = configobj.ConfigObj(config_path, file_error=True, encoding='utf-8')
-            self.config_dict['Engine']['Services']
             stn_dict = self.config_dict['WeatherFlowUDP']
-            self._token = stn_dict.get('token', '')
-            self._device_id_dict, self._device_dict = weatherflowudp.getStationDevices(self._token)
-            self._devices = weatherflowudp.getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
+            self.request_timeout = float(stn_dict.get('request_timeout', 30))
+            self.token = stn_dict.get('token', '')
+            self.device_id_dict, self.device_dict = weatherflowudp.getStationDevices(self.token, self.request_timeout)
+            self.devices = weatherflowudp.getDevices(stn_dict.get('devices', list(self.device_dict.keys())), self.device_dict.keys(), self.token)
         
         except IOError:
             print("Unable to open configuration file %s" % config_path, file=sys.stderr)
@@ -69,8 +69,6 @@ class Test(unittest.TestCase):
         self.strike6 = [1617299315, 38, 123]
         self.strike7 = [1617299368, 24, 123]
         self.rapid_wind1 = [1617299170, 2.5, 180]
-        
-        self.end_archive_period_ts = 1617299400
 
     def tearDown(self):
         pass
@@ -119,7 +117,7 @@ class Test(unittest.TestCase):
 
         pass      
         
-    def ztestRESTData(self):
+    def testRESTData(self):
         
         result = dict()
         result['device_ids'] = [self.device_id]

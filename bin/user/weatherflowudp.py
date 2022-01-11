@@ -156,6 +156,7 @@ import weewx.accum
 from weewx.engine import StdService
 from weeutil.weeutil import tobool
 import requests
+from requests.exceptions import Timeout
 from datetime import datetime
 import calendar
 from configobj import ConfigObj
@@ -335,10 +336,10 @@ def getStationsUrl(token):
 def getObservationsUrl(start, end, token, device_id):
     return 'https://swd.weatherflow.com/swd/rest/observations/device/{device_id}?token={token}&time_start={start}&time_end={end}'.format(token = token, device_id = device_id, start = start, end = end)
 
-def getStationDevices(token):
+def getStationDevices(token, request_timeout):
     if not token:
         return dict(), dict()
-    response = requests.get(getStationsUrl(token))
+    response = requests.get(getStationsUrl(token), timeout=request_timeout)
     if (response.status_code != 200):
         raise DriverException("Could not fetch station information from WeatherFlow webservice: {}".format(response))
     stations = response.json()["stations"]
@@ -351,7 +352,7 @@ def getStationDevices(token):
                 device_dict.update({device["serial_number"]:device["device_id"]})
     return device_id_dict, device_dict
 
-def readDataFromWF(start, stop, token, devices, device_dict, batch_size):
+def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request_timeout):
     isFinished = False
     while not isFinished: # end > calendar.timegm(datetime.utcnow().utctimetuple()):
         end = start + batch_size - 1
@@ -361,7 +362,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size):
         timestamps = None
         for device in devices:
             logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
-            response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]))
+            response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
             if (response.status_code != 200):
                 raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
             jsonResponse = response.json()
@@ -584,11 +585,12 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._udp_address = stn_dict.get('udp_address', '<broadcast>')
         self._udp_port = int(stn_dict.get('udp_port', 50222))
         self._udp_timeout = int(stn_dict.get('udp_timeout', 90))
+        self._request_timeout = float(stn_dict.get('request_timeout', 30))
         self._share_socket = tobool(stn_dict.get('share_socket', False))
         self._sensor_map = stn_dict.get('sensor_map', None)
         self._token = stn_dict.get('token', '')
+        self._device_id_dict, self._device_dict = getStationDevices(self._token, self._request_timeout)
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
-        self._device_id_dict, self._device_dict = getStationDevices(self._token)
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
         self._archive_interval = int(std_dict.get('archive_interval', 60))
@@ -706,7 +708,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
-            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._batch_size):
+            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._batch_size, self._request_timeout):
                 for archive_record in self.convertREST2weewx(packet):
                     yield archive_record
         else:
@@ -801,26 +803,27 @@ class WeatherflowAugmentService(StdService):
         super(WeatherflowAugmentService, self).__init__(engine, config_dict)
         
         service_dict = config_dict['WeatherflowAugmentService']
-        self.driver = WeatherFlowUDPDriver(config_dict)
-        self.augment_readings = service_dict.get('augment_readings', None)
+        self._driver = WeatherFlowUDPDriver(config_dict)
+        self._augment_readings = service_dict.get('augment_readings', None)
+        self._request_timeout = float(service_dict.get('request_timeout', 10))
         
         # Bind to any new archive record events:
         log.info("Init WeatherflowAugmentService")
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
 
-        self.augmentMode = AUGMENT_MODE_CONDITIONAL
+        self._augmentMode = AUGMENT_MODE_ALWAYS
         
     def new_archive_record(self, event):
         """Gets called on a new archive record event."""
 
-        if (self.augment_readings):
+        if (self._augment_readings):
             try:
-                for packet in readDataFromWF(event.record['dateTime'] - self.driver._archive_interval + 1, event.record['dateTime'] -1, self.driver._token, self.driver._devices, self.driver._device_dict, self.driver._archive_interval):
-                    for archive_record in self.driver.convertREST2weewx(packet):
+                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout):
+                    for archive_record in self._driver.convertREST2weewx(packet):
                         if (archive_record['dateTime'] == event.record['dateTime'] and 
                             'weatherFlowObservationCount' in archive_record and
-                            archive_record['weatherFlowObservationCount'] == (self.driver._archive_interval / 60)):
-                            for augment_reading in self.augment_readings:
+                            archive_record['weatherFlowObservationCount'] == (self._driver._archive_interval / 60)):
+                            for augment_reading in self._augment_readings:
                                 if augment_reading in archive_record:
                                     event.record[augment_reading] = archive_record[augment_reading]
                                 else:
@@ -828,6 +831,9 @@ class WeatherflowAugmentService(StdService):
                             break
                         else:
                             log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete')
+            
+            except Timeout:
+                log.warning('Could not augment values with Weatherflow REST data due to an API timeout')
             except:
                 log.error('Could not augment values with Weatherflow REST data')
                 log.error(traceback.format_exc())
@@ -883,7 +889,7 @@ if __name__ == '__main__':
             print('Please provide an API token with the --token=TOKEN option')
             exit(1)
         try:
-            device_id_dict, device_dict = getStationDevices(options.token)
+            device_id_dict, device_dict = getStationDevices(options.token, 30)
             devicesList = [s.strip() for s in options.devices.split(',')] if ',' in options.devices else options.devices if len(options.devices) > 0 else list(device_dict.keys())
             devices = getDevices(devicesList, device_dict.keys(), options.token, True)
             sensor_map = getSensorMap(devices, device_id_dict, True)
