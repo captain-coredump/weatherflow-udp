@@ -281,6 +281,10 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
                 else: 
                     packet[pkt_weewx] = pkt[label.replace("-","_")]
     
+    #add rainRate value
+    if 'rain' in packet:
+        packet['rainRate'] = packet['rain'] * 60
+    
     return packet, lightning_packet    
 
 def parseUDPPacket(pkt, calculator = None):
