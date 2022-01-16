@@ -230,7 +230,7 @@ fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_di
 def loader(config_dict, engine):
     return WeatherFlowUDPDriver(config_dict)
 
-def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
+def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = False):
     packet = dict()
     if 'time_epoch' in pkt:
         packet = {
@@ -282,7 +282,7 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1):
                     packet[pkt_weewx] = pkt[label.replace("-","_")]
     
     #add rainRate value
-    if 'rain' in packet:
+    if generateRainRate and 'rain' in packet:
         packet['rainRate'] = packet['rain'] * 60
     
     return packet, lightning_packet    
@@ -599,6 +599,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
         self._archive_interval = int(std_dict.get('archive_interval', 60))
         self._loopHiLo = tobool(std_dict.get('loop_hilo', True))
+        self._generateRainRate = tobool(std_dict.get('generateRainRate', False))
         self._archive_delay = int(std_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
@@ -620,7 +621,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             # has not been initialized with a correct dateTime treating values below 1000
             # as obvious wrong values
             if 'time_epoch' in m2 and m2['time_epoch'] > 1000:
-                m3_non_lightning, m3_lightning = mapToWeewxPacket(m2, self._sensor_map, False)
+                m3_non_lightning, m3_lightning = mapToWeewxPacket(m2, self._sensor_map, False, 1, self._generateRainRate)
                 m3_array = [m3_non_lightning, m3_lightning]
                 for m3 in m3_array:
                     if (m3 and len(m3) > 2):
@@ -668,7 +669,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         observationCount = 0
         for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
             observationCount += 1
-            m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60))
+            m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60), self._generateRainRate)
             m3_array = [m3_non_lightning, m3_lightning]
             for m3 in m3_array:
                 if m3 and len(m3) > 3:
