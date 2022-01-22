@@ -253,12 +253,12 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
             weatherflow_lightning_strike_avg_distance_key = weatherflow_key
     
     if weatherflow_lightning_strike_count_key and weatherflow_lightning_strike_avg_distance_key:
-        weight = pkt[weatherflow_lightning_strike_count_key]
+        loop_packet_weight = pkt[weatherflow_lightning_strike_count_key]
         lightning_packet = dict()
         lightning_packet = {
             'dateTime': pkt['time_epoch'],
             'usUnits' : weewx.METRICWX,
-            'weight' : weight
+            'loop_packet_weight' : loop_packet_weight
         }
         if pkt[weatherflow_lightning_strike_count_key] == 0:
             # If there was no strike the distance should be None and not 0 as used by weatherflow
@@ -597,9 +597,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
+        self._generateRainRate = tobool(stn_dict.get('generateRainRate', False))
         self._archive_interval = int(std_dict.get('archive_interval', 60))
         self._loopHiLo = tobool(std_dict.get('loop_hilo', True))
-        self._generateRainRate = tobool(std_dict.get('generateRainRate', False))
         self._archive_delay = int(std_dict.get('archive_delay', 15))
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
@@ -744,10 +744,10 @@ class ArchivePeriod:
         (self._accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
     
     def addRecord(self, record, add_hilo=True):
-        weight = 1
-        if "weight" in record:
-            weight = record.pop("weight")
-        self._accumulator.addRecord(record, add_hilo,weight)
+        loop_packet_weight = 1
+        if "loop_packet_weight" in record:
+            loop_packet_weight = record.pop("loop_packet_weight")
+        self._accumulator.addRecord(record, add_hilo, loop_packet_weight)
     
     def getPreviousRecord(self):
         if (self._old_accumulator):
@@ -808,9 +808,13 @@ class WeatherflowAugmentService(StdService):
         super(WeatherflowAugmentService, self).__init__(engine, config_dict)
         
         service_dict = config_dict['WeatherflowAugmentService']
+        std_dict = config_dict['StdArchive']
         self._driver = WeatherFlowUDPDriver(config_dict)
         self._augment_readings = service_dict.get('augment_readings', None)
         self._request_timeout = float(service_dict.get('request_timeout', 10))
+        self._cloud_data_delay = float(service_dict.get('cloud_data_delay', 40))
+        self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
+        self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', 90))
         
         # Bind to any new archive record events:
         log.info("Init WeatherflowAugmentService")
@@ -821,21 +825,35 @@ class WeatherflowAugmentService(StdService):
     def new_archive_record(self, event):
         """Gets called on a new archive record event."""
 
+        # The first call could contain incomplete UDP data for the whole archive interval. The values from the REST API could be wrong in that case.
+        # Therefore we skip the first archiving event.
         if (self._augment_readings):
             try:
+                archive_datetime = event.record['dateTime']
+                # Usually the cloud data is available 35 seconds after the dateTime of the archive package. Default is 40 seconds to be rather sure to get a result.
+                sleep_time = ((archive_datetime + self._cloud_data_delay) - time.time())
+                if sleep_time > self._maximum_sleep_time:
+                    sleep_time = self._maximum_sleep_time
+                if sleep_time > 0:
+                    time.sleep(sleep_time)  #Wait for cloud data to be ready to be requested
+                elif archive_datetime + self._max_loop_archive_delay < time.time():
+                    log.info("Seems to be not an archive entry based on loop data -> Will not augment data because it is probably already generated from the cloud data.")
+                    return
                 for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout):
-                    for archive_record in self._driver.convertREST2weewx(packet):
-                        if (archive_record['dateTime'] == event.record['dateTime'] and 
-                            'weatherFlowObservationCount' in archive_record and
-                            archive_record['weatherFlowObservationCount'] == (self._driver._archive_interval / 60)):
+                    for cloud_record in self._driver.convertREST2weewx(packet):
+                        if (cloud_record['dateTime'] == event.record['dateTime'] and 
+                            'weatherFlowObservationCount' in cloud_record and
+                            cloud_record['weatherFlowObservationCount'] == (self._driver._archive_interval / 60)):
                             for augment_reading in self._augment_readings:
-                                if augment_reading in archive_record:
-                                    event.record[augment_reading] = archive_record[augment_reading]
+                                if augment_reading in cloud_record:
+                                    if event.record[augment_reading] != cloud_record[augment_reading]:
+                                        event.record[augment_reading] = cloud_record[augment_reading]
+                                        log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (augment_reading, cloud_record[augment_reading], event.record[augment_reading]))
                                 else:
-                                    log.info('Did not get value for %s fro Weatherflow REST API' % augment_reading)
+                                    log.info('Did not get value for %s from Weatherflow REST API' % augment_reading)
                             break
                         else:
-                            log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete')
+                            log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete (%s)' % cloud_record['weatherFlowObservationCount'])
             
             except Timeout:
                 log.warning('Could not augment values with Weatherflow REST data due to an API timeout')

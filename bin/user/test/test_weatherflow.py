@@ -204,7 +204,7 @@ class TestConsole(object):
                 )
         for m1 in m1_list:
             m2 = weatherflowudp.parseUDPPacket(m1, self.test_instance.driver._calculator)
-            m3_non_lightning, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False)
+            m3_non_lightning, m3_lightning = weatherflowudp.mapToWeewxPacket(m2, self.test_instance.driver._sensor_map, False, 1, True)
             m3_array = [m3_non_lightning, m3_lightning]
             for m3 in m3_array:
                 if (m3 and len(m3) > 2):
