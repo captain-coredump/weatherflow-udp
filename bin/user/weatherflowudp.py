@@ -218,6 +218,9 @@ except ImportError:
 class DriverException(Exception):
     pass
 
+class IncompleteDataException(Exception):
+    pass
+
 # Observation record fields...
 fields = dict()
 fields['obs_air'] = ('time_epoch', 'station_pressure', 'air_temperature', 'relative_humidity', 'lightning_strike_count', 'lightning_strike_avg_distance', 'battery', 'report_interval')
@@ -356,7 +359,7 @@ def getStationDevices(token, request_timeout):
                 device_dict.update({device["serial_number"]:device["device_id"]})
     return device_id_dict, device_dict
 
-def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request_timeout):
+def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request_timeout, min_expected_observation_count, max_retry_count):
     isFinished = False
     while not isFinished: # end > calendar.timegm(datetime.utcnow().utctimetuple()):
         end = start + batch_size - 1
@@ -365,11 +368,24 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
         results = list()
         timestamps = None
         for device in devices:
-            logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
-            response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
-            if (response.status_code != 200):
-                raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
-            jsonResponse = response.json()
+            observation_count = None
+            retry = 0
+            while not observation_count or observation_count < min_expected_observation_count:
+                if retry > max_retry_count:
+                    raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
+                                                  % (observation_count, min_expected_observation_count, device))
+                if retry > 0:
+                    time.sleep(5) # execute retry after a short delay
+                logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
+                response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
+                if (response.status_code != 200):
+                    raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
+                jsonResponse = response.json()
+                if (jsonResponse['obs']):
+                    observation_count = len(jsonResponse['obs'])
+                else:
+                    observation_count = 0
+                retry += 1
             if lastTimestamp == None and jsonResponse['obs'] != None:
                 lastTimestamp = sorted(jsonResponse['obs'], key = lambda i: i[0], reverse = True)[0][0]
 
@@ -380,6 +396,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
             newTimestamps = [observation[0] for observation in observations]
             timestamps = timestamps or (timestamps or list()) + list(set(newTimestamps) - set(timestamps or list()))
             result['obs'] = dict(zip(newTimestamps, observations))
+            len(result)
 
             results.append(result)
         combinedResult = dict()
@@ -666,9 +683,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def convertREST2weewx(self, packet):
         archivePeriod = None
-        observationCount = 0
         for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
-            observationCount += 1
             m3_non_lightning, m3_lightning = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60), self._generateRainRate)
             m3_array = [m3_non_lightning, m3_lightning]
             for m3 in m3_array:
@@ -697,14 +712,12 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                     archive_record = archivePeriod.getPreviousRecord()
                     if archive_record:
                         logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
-                        archive_record['weatherFlowObservationCount'] = observationCount - 1
                         observationCount = 1
                         yield archive_record
         if archivePeriod:
             archive_record = archivePeriod.getRecord()
             if archive_record:
                 # return record from last processed accumulator
-                archive_record['weatherFlowObservationCount'] = observationCount
                 yield archive_record
 
     def genStartupRecords(self, since_ts):
@@ -713,7 +726,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
-            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._batch_size, self._request_timeout):
+            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._batch_size, self._request_timeout, 0, 0):
                 for archive_record in self.convertREST2weewx(packet):
                     yield archive_record
         else:
@@ -808,13 +821,13 @@ class WeatherflowAugmentService(StdService):
         super(WeatherflowAugmentService, self).__init__(engine, config_dict)
         
         service_dict = config_dict['WeatherflowAugmentService']
-        std_dict = config_dict['StdArchive']
         self._driver = WeatherFlowUDPDriver(config_dict)
         self._augment_readings = service_dict.get('augment_readings', None)
         self._request_timeout = float(service_dict.get('request_timeout', 10))
-        self._cloud_data_delay = float(service_dict.get('cloud_data_delay', 40))
+        self._weatherflow_data_delay = float(service_dict.get('weatherflow_data_delay', 40))
         self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
         self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', 90))
+        self._max_retry_count = int(service_dict.get('max_retry_count', 3))
         
         # Bind to any new archive record events:
         log.info("Init WeatherflowAugmentService")
@@ -830,33 +843,35 @@ class WeatherflowAugmentService(StdService):
         if (self._augment_readings):
             try:
                 archive_datetime = event.record['dateTime']
-                # Usually the cloud data is available 35 seconds after the dateTime of the archive package. Default is 40 seconds to be rather sure to get a result.
-                sleep_time = ((archive_datetime + self._cloud_data_delay) - time.time())
+                # Usually the weatherflow data is available 35 seconds after the dateTime of the archive package. Default is 40 seconds to be rather sure to get a result.
+                sleep_time = ((archive_datetime + self._weatherflow_data_delay) - time.time())
                 if sleep_time > self._maximum_sleep_time:
                     sleep_time = self._maximum_sleep_time
                 if sleep_time > 0:
-                    time.sleep(sleep_time)  #Wait for cloud data to be ready to be requested
+                    time.sleep(sleep_time)  #Wait for weatherflow data to be ready to be requested
                 elif archive_datetime + self._max_loop_archive_delay < time.time():
-                    log.info("Seems to be not an archive entry based on loop data -> Will not augment data because it is probably already generated from the cloud data.")
+                    log.info("Seems not to be an archive entry based on loop data -> Will not augment data because it is probably already generated from the weatherflow data.")
                     return
-                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout):
-                    for cloud_record in self._driver.convertREST2weewx(packet):
-                        if (cloud_record['dateTime'] == event.record['dateTime'] and 
-                            'weatherFlowObservationCount' in cloud_record and
-                            cloud_record['weatherFlowObservationCount'] == (self._driver._archive_interval / 60)):
+
+                expected_observation_count = int(self._driver._archive_interval / 60)
+                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
+                    for weatherflow_record in self._driver.convertREST2weewx(packet):
+                        if weatherflow_record['dateTime'] == event.record['dateTime']:
                             for augment_reading in self._augment_readings:
-                                if augment_reading in cloud_record:
-                                    if event.record[augment_reading] != cloud_record[augment_reading]:
-                                        event.record[augment_reading] = cloud_record[augment_reading]
-                                        log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (augment_reading, cloud_record[augment_reading], event.record[augment_reading]))
+                                if augment_reading in weatherflow_record and weatherflow_record[augment_reading] is not None:
+                                    if event.record[augment_reading] != weatherflow_record[augment_reading]:
+                                        log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (augment_reading, weatherflow_record[augment_reading], event.record[augment_reading]))
+                                        event.record[augment_reading] = weatherflow_record[augment_reading]
                                 else:
                                     log.info('Did not get value for %s from Weatherflow REST API' % augment_reading)
                             break
                         else:
-                            log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete (%s)' % cloud_record['weatherFlowObservationCount'])
+                            log.info('Could not augment values with Weatherflow REST data because Weatherflow result timestamp does not match')
             
             except Timeout:
                 log.warning('Could not augment values with Weatherflow REST data due to an API timeout')
+            except IncompleteDataException:
+                log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete')
             except:
                 log.error('Could not augment values with Weatherflow REST data')
                 log.error(traceback.format_exc())
