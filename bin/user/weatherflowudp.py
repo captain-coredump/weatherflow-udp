@@ -375,7 +375,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                     raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
                                                   % (observation_count, min_expected_observation_count, device))
                 if retry > 0:
-                    time.sleep(5) # execute retry after a short delay
+                    time.sleep(10) # execute retry after a short delay
                 logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
                 response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
                 if (response.status_code != 200):
@@ -858,8 +858,8 @@ class WeatherflowAugmentService(StdService):
                     for weatherflow_record in self._driver.convertREST2weewx(packet):
                         if weatherflow_record['dateTime'] == event.record['dateTime']:
                             for augment_reading in self._augment_readings:
-                                if augment_reading in weatherflow_record and weatherflow_record[augment_reading] is not None:
-                                    if event.record[augment_reading] != weatherflow_record[augment_reading]:
+                                if augment_reading in weatherflow_record:
+                                    if weatherflow_record[augment_reading] is not None and event.record[augment_reading] != weatherflow_record[augment_reading]:
                                         log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (augment_reading, weatherflow_record[augment_reading], event.record[augment_reading]))
                                         event.record[augment_reading] = weatherflow_record[augment_reading]
                                 else:
