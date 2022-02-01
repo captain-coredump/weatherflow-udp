@@ -154,6 +154,7 @@ import weewx.drivers
 import weewx.wxformulas
 import weewx.accum
 from weewx.engine import StdService
+from weewx.accum import Accum
 from weeutil.weeutil import tobool
 import requests
 from requests.exceptions import Timeout
@@ -246,14 +247,20 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
     if isRest:
         packet.update({'interval':interval})
 
-    # Correct distance value for lightning strikes when count was 0
+    # Correct 0 values where they should be None
     weatherflow_lightning_strike_count_key = None
     weatherflow_lightning_strike_avg_distance_key = None
+    weatherflow_wind_avg_key = None
+    weatherflow_wind_direction_key = None
     for weatherflow_key in pkt.keys():
         if weatherflow_key.find("lightning_strike_count") > -1:
             weatherflow_lightning_strike_count_key = weatherflow_key
         elif weatherflow_key.find("lightning_strike_avg_distance") > -1:
             weatherflow_lightning_strike_avg_distance_key = weatherflow_key
+        elif weatherflow_key.find("wind_avg") > -1:
+            weatherflow_wind_avg_key = weatherflow_key
+        elif weatherflow_key.find("wind_direction") > -1:
+            weatherflow_wind_direction_key = weatherflow_key
     
     if weatherflow_lightning_strike_count_key and weatherflow_lightning_strike_avg_distance_key:
         loop_packet_weight = pkt[weatherflow_lightning_strike_count_key]
@@ -265,8 +272,12 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
         }
         if pkt[weatherflow_lightning_strike_count_key] == 0:
             # If there was no strike the distance should be None and not 0 as used by weatherflow
-            # Perhaps the weight of 0 for such events would be enough but a value of None makes things clearer
             pkt[weatherflow_lightning_strike_avg_distance_key] = None
+
+    if weatherflow_wind_avg_key and weatherflow_wind_direction_key:
+        if pkt[weatherflow_wind_avg_key] == 0:
+            # If there was no wind the direction should be None and not 0 as used by weatherflow
+            pkt[weatherflow_wind_direction_key] = None
 
     for pkt_weewx, pkt_label in sensor_map.items():
         for label in ensureList(pkt_label):
@@ -743,7 +754,7 @@ class ArchivePeriod:
         if (self._end_archive_period_ts > time.time()):
                 self._end_archive_period_ts = int(time.time())
         self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
-        self._accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts))
+        self._accumulator = LightningAccum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts))
         self._old_accumulator = None
         
     def startNextArchiveInterval(self, start_archive_period_ts):
@@ -754,7 +765,7 @@ class ArchivePeriod:
         self._end_archive_delay_ts = self._end_archive_period_ts + self._archive_delay
             
         (self._old_accumulator, self._accumulator) = \
-        (self._accumulator, weewx.accum.Accum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
+        (self._accumulator, LightningAccum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
     
     def addRecord(self, record, add_hilo=True):
         loop_packet_weight = 1
@@ -811,10 +822,36 @@ class BatteryModeCalculator:
             else:
                 return 0        
 
+class WeatherflowAugmentation(object):
+    """Event issued when the WeatherflowAugmentService has collected a suitable record
+       from the weatherflow API and the record needs to go through the preparation services."""
+
+class WeatherflowCalibrate(weewx.engine.StdCalibrate):
+    """Adjust data using calibration expressions."""
+
+    def __init__(self, engine, config_dict):
+        # Initialize my base class:
+        super(WeatherflowCalibrate, self).__init__(engine, config_dict)
+        self.bind(WeatherflowAugmentation, self.new_archive_record)
+
+class WeatherflowQC(weewx.engine.StdQC):
+    """Service that performs quality check on incoming data."""
+
+    def __init__(self, engine, config_dict):
+        super(WeatherflowQC, self).__init__(engine, config_dict)
+        self.bind(WeatherflowAugmentation, self.new_archive_record)
+
+class WeatherflowConvert(weewx.engine.StdConvert):
+    """Service for performing unit conversions."""
+
+    def __init__(self, engine, config_dict):
+        # Initialize my base class:
+        super(WeatherflowConvert, self).__init__(engine, config_dict)
+        self.bind(WeatherflowAugmentation, self.new_archive_record)
+
+
 class WeatherflowAugmentService(StdService):
     """Service that allows to augment archive records with data from Weatherflow REST API"""
-
-
 
     def __init__(self, engine, config_dict):
         # Pass the initialization information on to my superclass:
@@ -834,7 +871,8 @@ class WeatherflowAugmentService(StdService):
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
 
         self._augmentMode = AUGMENT_MODE_ALWAYS
-        
+        self._engine = engine
+    
     def new_archive_record(self, event):
         """Gets called on a new archive record event."""
 
@@ -857,6 +895,9 @@ class WeatherflowAugmentService(StdService):
                 for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
                     for weatherflow_record in self._driver.convertREST2weewx(packet):
                         if weatherflow_record['dateTime'] == event.record['dateTime']:
+                            self._engine.dispatchEvent(weewx.Event(WeatherflowAugmentation,
+                                                                   record=weatherflow_record,
+                                                                   origin='hardware'))
                             for augment_reading in self._augment_readings:
                                 if augment_reading in weatherflow_record:
                                     if weatherflow_record[augment_reading] is not None and event.record[augment_reading] != weatherflow_record[augment_reading]:
@@ -875,6 +916,10 @@ class WeatherflowAugmentService(StdService):
             except:
                 log.error('Could not augment values with Weatherflow REST data')
                 log.error(traceback.format_exc())
+
+class LightningAccum(Accum):
+    pass
+    
 
 if __name__ == '__main__':
     import optparse
