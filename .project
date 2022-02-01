@@ -3,7 +3,7 @@
 	<name>weatherflow-udp</name>
 	<comment></comment>
 	<projects>
-		<project>edi-x_weewx</project>
+		<project>weewx</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
