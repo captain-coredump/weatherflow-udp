@@ -261,12 +261,12 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
             weatherflow_wind_direction_key = weatherflow_key
     
     if weatherflow_lightning_strike_count_key and weatherflow_lightning_strike_avg_distance_key:
-        if round(pkt[weatherflow_lightning_strike_count_key], 0) == 0:
+        if pkt[weatherflow_lightning_strike_count_key] == 0:
             # If there was no strike the distance should be None and not 0 as used by weatherflow
             pkt[weatherflow_lightning_strike_avg_distance_key] = None
 
     if weatherflow_wind_avg_key and weatherflow_wind_direction_key:
-        if round(pkt[weatherflow_wind_avg_key], 2) == 0.00:
+        if round(pkt[weatherflow_wind_avg_key],2) == 0.00:
             # If there was no wind the direction should be None and not 0 as used by weatherflow
             pkt[weatherflow_wind_direction_key] = None
 
