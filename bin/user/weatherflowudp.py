@@ -756,10 +756,7 @@ class ArchivePeriod:
         (self._accumulator, LightningAccum(weeutil.weeutil.TimeSpan(self._start_archive_period_ts, self._end_archive_period_ts)))
     
     def addRecord(self, record, add_hilo=True):
-        loop_packet_weight = 1
-        if "loop_packet_weight" in record:
-            loop_packet_weight = record.pop("loop_packet_weight")
-        self._accumulator.addRecord(record, add_hilo, loop_packet_weight)
+        self._accumulator.addRecord(record, add_hilo=add_hilo)
     
     def getPreviousRecord(self):
         if (self._old_accumulator):
