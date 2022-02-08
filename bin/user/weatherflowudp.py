@@ -249,6 +249,7 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
     weatherflow_lightning_strike_count_key = None
     weatherflow_lightning_strike_avg_distance_key = None
     weatherflow_wind_avg_key = None
+    weatherflow_wind_speed_key = None
     weatherflow_wind_direction_key = None
     for weatherflow_key in pkt.keys():
         if weatherflow_key.find("lightning_strike_count") > -1:
@@ -257,6 +258,8 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
             weatherflow_lightning_strike_avg_distance_key = weatherflow_key
         elif weatherflow_key.find("wind_avg") > -1:
             weatherflow_wind_avg_key = weatherflow_key
+        elif weatherflow_key.find("wind_speed") > -1:
+            weatherflow_wind_speed_key = weatherflow_key
         elif weatherflow_key.find("wind_direction") > -1:
             weatherflow_wind_direction_key = weatherflow_key
     
@@ -267,6 +270,11 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
 
     if weatherflow_wind_avg_key and weatherflow_wind_direction_key:
         if round(pkt[weatherflow_wind_avg_key],2) == 0.00:
+            # If there was no wind the direction should be None and not 0 as used by weatherflow
+            pkt[weatherflow_wind_direction_key] = None
+
+    if weatherflow_wind_speed_key and weatherflow_wind_direction_key:
+        if round(pkt[weatherflow_wind_speed_key],2) == 0.00:
             # If there was no wind the direction should be None and not 0 as used by weatherflow
             pkt[weatherflow_wind_direction_key] = None
 
@@ -370,7 +378,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                     raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
                                                   % (observation_count, min_expected_observation_count, device))
                 if retry > 0:
-                    time.sleep(10) # execute retry after a short delay
+                    time.sleep(20) # execute retry after a short delay
                 logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
                 response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
                 if (response.status_code != 200):
@@ -829,7 +837,6 @@ class WeatherflowConvert(weewx.engine.StdConvert):
         super(WeatherflowConvert, self).__init__(engine, config_dict)
         self.bind(WeatherflowAugmentation, self.new_archive_record)
 
-
 class WeatherflowAugmentService(StdService):
     """Service that allows to augment archive records with data from Weatherflow REST API"""
 
@@ -843,7 +850,7 @@ class WeatherflowAugmentService(StdService):
         self._request_timeout = float(service_dict.get('request_timeout', 10))
         self._weatherflow_data_delay = float(service_dict.get('weatherflow_data_delay', 40))
         self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
-        self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', 90))
+        self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', self._driver._archive_interval - 1))
         self._max_retry_count = int(service_dict.get('max_retry_count', 3))
         
         # Bind to any new archive record events:
@@ -868,7 +875,7 @@ class WeatherflowAugmentService(StdService):
                 if sleep_time > 0:
                     time.sleep(sleep_time)  #Wait for weatherflow data to be ready to be requested
                 elif archive_datetime + self._max_loop_archive_delay < time.time():
-                    log.info("Seems not to be an archive entry based on loop data -> Will not augment data because it is probably already generated from the weatherflow data.")
+                    log.info("Seems not to be an archive entry based on API data -> Will not augment data because it is probably already generated from the weatherflow data.")
                     return
 
                 expected_observation_count = int(self._driver._archive_interval / 60)
