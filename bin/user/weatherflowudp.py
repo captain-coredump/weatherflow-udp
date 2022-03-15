@@ -166,8 +166,6 @@ from configobj import ConfigObj
 DRIVER_VERSION = "1.13"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
-AUGMENT_MODE_ALWAYS = 'ALWAYS'
-AUGMENT_MODE_CONDITIONAL = 'CONDITIONAL'
 
 try:
     # Test for new-style weewx logging by trying to import weeutil.logger
@@ -807,8 +805,8 @@ class BatteryModeCalculator:
             else:
                 return 0        
 
-class WeatherflowAugmentation(object):
-    """Event issued when the WeatherflowAugmentService has collected a suitable record
+class WeatherflowEnhancement(object):
+    """Event issued when the WeatherflowCloudDataService has collected a suitable record
        from the weatherflow API and the record needs to go through the preparation services."""
 
 class WeatherflowCalibrate(weewx.engine.StdCalibrate):
@@ -817,14 +815,14 @@ class WeatherflowCalibrate(weewx.engine.StdCalibrate):
     def __init__(self, engine, config_dict):
         # Initialize my base class:
         super(WeatherflowCalibrate, self).__init__(engine, config_dict)
-        self.bind(WeatherflowAugmentation, self.new_archive_record)
+        self.bind(WeatherflowEnhancement, self.new_archive_record)
 
 class WeatherflowQC(weewx.engine.StdQC):
     """Service that performs quality check on incoming data."""
 
     def __init__(self, engine, config_dict):
         super(WeatherflowQC, self).__init__(engine, config_dict)
-        self.bind(WeatherflowAugmentation, self.new_archive_record)
+        self.bind(WeatherflowEnhancement, self.new_archive_record)
 
 class WeatherflowConvert(weewx.engine.StdConvert):
     """Service for performing unit conversions."""
@@ -832,18 +830,18 @@ class WeatherflowConvert(weewx.engine.StdConvert):
     def __init__(self, engine, config_dict):
         # Initialize my base class:
         super(WeatherflowConvert, self).__init__(engine, config_dict)
-        self.bind(WeatherflowAugmentation, self.new_archive_record)
+        self.bind(WeatherflowEnhancement, self.new_archive_record)
 
-class WeatherflowAugmentService(StdService):
-    """Service that allows to augment archive records with data from Weatherflow REST API"""
+class WeatherflowCloudDataService(StdService):
+    """Service that allows to substitute observations in archive records with data from Weatherflow REST API"""
 
     def __init__(self, engine, config_dict):
         # Pass the initialization information on to my superclass:
-        super(WeatherflowAugmentService, self).__init__(engine, config_dict)
+        super(WeatherflowCloudDataService, self).__init__(engine, config_dict)
         
-        service_dict = config_dict['WeatherflowAugmentService']
+        service_dict = config_dict['WeatherflowCloudDataService']
         self._driver = WeatherFlowUDPDriver(config_dict)
-        self._augment_readings = service_dict.get('augment_readings', None)
+        self._enhanced_readings = service_dict.get('enhanced_readings', None)
         self._request_timeout = float(service_dict.get('request_timeout', 10))
         self._weatherflow_data_delay = float(service_dict.get('weatherflow_data_delay', 40))
         self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
@@ -851,10 +849,9 @@ class WeatherflowAugmentService(StdService):
         self._max_retry_count = int(service_dict.get('max_retry_count', 3))
         
         # Bind to any new archive record events:
-        log.info("Init WeatherflowAugmentService")
+        log.info("Init WeatherflowCloudDataService")
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
 
-        self._augmentMode = AUGMENT_MODE_ALWAYS
         self._engine = engine
     
     def new_archive_record(self, event):
@@ -862,7 +859,7 @@ class WeatherflowAugmentService(StdService):
 
         # The first call could contain incomplete UDP data for the whole archive interval. The values from the REST API could be wrong in that case.
         # Therefore we skip the first archiving event.
-        if (self._augment_readings):
+        if (self._enhanced_readings):
             try:
                 archive_datetime = event.record['dateTime']
                 # Usually the weatherflow data is available 35 seconds after the dateTime of the archive package. Default is 40 seconds to be rather sure to get a result.
@@ -872,33 +869,33 @@ class WeatherflowAugmentService(StdService):
                 if sleep_time > 0:
                     time.sleep(sleep_time)  #Wait for weatherflow data to be ready to be requested
                 elif archive_datetime + self._max_loop_archive_delay < time.time():
-                    log.info("Seems not to be an archive entry based on API data -> Will not augment data because it is probably already generated from the weatherflow data.")
+                    log.info("Seems not to be an archive entry based on API data -> Will not enhance data because it is probably already generated from the weatherflow data.")
                     return
 
                 expected_observation_count = int(self._driver._archive_interval / 60)
                 for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
                     for weatherflow_record in self._driver.convertREST2weewx(packet):
                         if weatherflow_record['dateTime'] == event.record['dateTime']:
-                            self._engine.dispatchEvent(weewx.Event(WeatherflowAugmentation,
+                            self._engine.dispatchEvent(weewx.Event(WeatherflowEnhancement,
                                                                    record=weatherflow_record,
                                                                    origin='hardware'))
-                            for augment_reading in self._augment_readings:
-                                if augment_reading in weatherflow_record:
-                                    if weatherflow_record[augment_reading] is not None and event.record[augment_reading] != weatherflow_record[augment_reading]:
-                                        log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (augment_reading, weatherflow_record[augment_reading], event.record[augment_reading]))
-                                        event.record[augment_reading] = weatherflow_record[augment_reading]
+                            for enhanced_reading in self._enhanced_readings:
+                                if enhanced_reading in weatherflow_record:
+                                    if weatherflow_record[enhanced_reading] is not None and event.record[enhanced_reading] != weatherflow_record[enhanced_reading]:
+                                        log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (enhanced_reading, weatherflow_record[enhanced_reading], event.record[enhanced_reading]))
+                                        event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
                                 else:
-                                    log.info('Did not get value for %s from Weatherflow REST API' % augment_reading)
+                                    log.info('Did not get value for %s from Weatherflow REST API' % enhanced_reading)
                             break
                         else:
-                            log.info('Could not augment values with Weatherflow REST data because Weatherflow result timestamp does not match')
+                            log.info('Could not enhance values with Weatherflow REST data because Weatherflow result timestamp does not match')
             
             except Timeout:
-                log.warning('Could not augment values with Weatherflow REST data due to an API timeout')
+                log.warning('Could not enhance values with Weatherflow REST data due to an API timeout')
             except IncompleteDataException:
-                log.info('Could not augment values with Weatherflow REST data because Weatherflow data was not complete')
+                log.info('Could not enhance values with Weatherflow REST data because Weatherflow data was not complete')
             except:
-                log.error('Could not augment values with Weatherflow REST data')
+                log.error('Could not enhance values with Weatherflow REST data')
                 log.error(traceback.format_exc())
 
 class LightningAccum(Accum):
