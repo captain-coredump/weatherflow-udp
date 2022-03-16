@@ -376,7 +376,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                     raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
                                                   % (observation_count, min_expected_observation_count, device))
                 if retry > 0:
-                    time.sleep(20) # execute retry after a short delay
+                    time.sleep(20) # execute retry after a delay
                 logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
                 response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
                 if (response.status_code != 200):
@@ -682,6 +682,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def convertREST2weewx(self, packet):
         archivePeriod = None
+        lightningPerMinuteArray = [];
         for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
             m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60), self._generateRainRate)
             if m3 and len(m3) > 3:
@@ -695,6 +696,18 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 if m3['dateTime'] >= archivePeriod._end_archive_delay_ts:
                     archivePeriod.startNextArchiveInterval(weeutil.weeutil.startOfInterval(m3['dateTime'], self._archive_interval))
                 
+                if 'lightning_strike_count' in m3 and m3['lightning_strike_count'] > 0:
+                    # add lightning detail per minute to database
+                    try:
+                        lightningDict = {
+                            'datetime': m3['dateTime'],
+                            'lightning_distance': m3['lightning_distance'],
+                            'lightning_strike_count': m3['lightning_strike_count']
+                        }
+                        lightningPerMinuteArray.append(lightningDict)
+                    except:
+                        log.error(traceback.format_exc())
+
                 # Try adding the API packet to the existing accumulator. If the
                 # timestamp is outside the timespan of the accumulator, an exception
                 # will be thrown
@@ -715,6 +728,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             archive_record = archivePeriod.getRecord()
             if archive_record:
                 # return record from last processed accumulator
+                if len(lightningPerMinuteArray) > 1:
+                    archive_record['lightningPerMinute'] = json.dumps({'lightningPerMinute': lightningPerMinuteArray})
                 yield archive_record
 
     def genStartupRecords(self, since_ts):
