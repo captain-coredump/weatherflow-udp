@@ -249,6 +249,8 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
     weatherflow_wind_avg_key = None
     weatherflow_wind_speed_key = None
     weatherflow_wind_direction_key = None
+    weatherflow_lightning_evt_time_epoch_key = None
+    weatherflow_lightning_evt_distance_key = None
     for weatherflow_key in pkt.keys():
         if weatherflow_key.find("lightning_strike_count") > -1:
             weatherflow_lightning_strike_count_key = weatherflow_key
@@ -260,6 +262,12 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
             weatherflow_wind_speed_key = weatherflow_key
         elif weatherflow_key.find("wind_direction") > -1:
             weatherflow_wind_direction_key = weatherflow_key
+        elif weatherflow_key.find("evt_strike") > -1:
+            if weatherflow_key.find("time_epoch.") > -1:
+                weatherflow_lightning_evt_time_epoch_key = weatherflow_key
+            elif weatherflow_key.find("distance.") > -1:
+                weatherflow_lightning_evt_distance_key = weatherflow_key
+        
     
     if weatherflow_lightning_strike_count_key and weatherflow_lightning_strike_avg_distance_key:
         if pkt[weatherflow_lightning_strike_count_key] == 0:
@@ -288,6 +296,18 @@ def mapToWeewxPacket(pkt, sensor_map, isRest, interval = 1, generateRainRate = F
     #add rainRate value
     if generateRainRate and 'rain' in packet:
         packet['rainRate'] = packet['rain'] * 60
+
+    #add lightningPerTimestampJson
+    if weatherflow_lightning_evt_time_epoch_key:
+        try:
+            lightningDict = {
+                    'datetime': pkt[weatherflow_lightning_evt_time_epoch_key],
+                    'lightning_distance': pkt[weatherflow_lightning_evt_distance_key],
+                    'lightning_strike_count': 1
+                }
+            packet['lightningPerTimestamp'] = json.dumps(lightningDict)
+        except:
+            log.error(traceback.format_exc())
     
     return packet    
 
@@ -682,7 +702,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def convertREST2weewx(self, packet):
         archivePeriod = None
-        lightningPerMinuteArray = [];
+        lightningPerTimestampArray = [];
         for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
             m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60), self._generateRainRate)
             if m3 and len(m3) > 3:
@@ -704,7 +724,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                             'lightning_distance': m3['lightning_distance'],
                             'lightning_strike_count': m3['lightning_strike_count']
                         }
-                        lightningPerMinuteArray.append(lightningDict)
+                        lightningPerTimestampArray.append(lightningDict)
                     except:
                         log.error(traceback.format_exc())
 
@@ -728,8 +748,8 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             archive_record = archivePeriod.getRecord()
             if archive_record:
                 # return record from last processed accumulator
-                if len(lightningPerMinuteArray) > 1:
-                    archive_record['lightningPerMinute'] = json.dumps({'lightningPerMinute': lightningPerMinuteArray})
+                if len(lightningPerTimestampArray) > 1:
+                    archive_record['lightningPerTimestamp'] = json.dumps(lightningPerTimestampArray)
                 yield archive_record
 
     def genStartupRecords(self, since_ts):
@@ -896,11 +916,15 @@ class WeatherflowCloudDataService(StdService):
                                                                    origin='hardware'))
                             for enhanced_reading in self._enhanced_readings:
                                 if enhanced_reading in weatherflow_record:
-                                    if weatherflow_record[enhanced_reading] is not None and event.record[enhanced_reading] != weatherflow_record[enhanced_reading]:
-                                        log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (enhanced_reading, weatherflow_record[enhanced_reading], event.record[enhanced_reading]))
-                                        event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
+                                    if enhanced_reading in weatherflow_record and event.record[enhanced_reading] != weatherflow_record[enhanced_reading]:
+                                        if not (enhanced_reading == 'lightning_strike_count' and weatherflow_record[enhanced_reading] == 0):
+                                            log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (enhanced_reading, weatherflow_record[enhanced_reading], event.record[enhanced_reading]))
+                                            event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
                                 else:
                                     log.info('Did not get value for %s from Weatherflow REST API' % enhanced_reading)
+                            if ('lightningPerTimestamp' in weatherflow_record and
+                                ('lightning_strike_count' in self._enhanced_readings or 'lightning_distance' in self._enhanced_readings)):
+                                event.record['lightningPerTimestamp'] = weatherflow_record['lightningPerTimestamp']
                             break
                         else:
                             log.info('Could not enhance values with Weatherflow REST data because Weatherflow result timestamp does not match')
@@ -913,6 +937,28 @@ class WeatherflowCloudDataService(StdService):
                 log.error('Could not enhance values with Weatherflow REST data')
                 log.error(traceback.format_exc())
 
+class JSONStats(object):
+    def __init__(self):
+        self.json_array = []
+
+    def getStatsTuple(self):
+        pass
+
+    def mergeHiLo(self, x_stats):
+        pass
+
+    def mergeSum(self, x_stats):
+        pass
+
+    def addHiLo(self, val, ts):
+        pass
+
+    def addSum(self, val, weight=1):
+        pass
+    
+    def addJsonToArray(self, val):
+        self.json_array.append(val)
+
 class LightningAccum(Accum):
 
     def __init__(self, timespan, unit_system=None):
@@ -923,8 +969,30 @@ class LightningAccum(Accum):
         if obs_type and record and 'lightning_strike_count' in record and str(obs_type) == 'lightning_distance':
             lightning_distance_weight = lightning_distance_weight * record['lightning_strike_count']
         self.add_value(record, obs_type, add_hilo, lightning_distance_weight)
+        
+class JSONAccum(Accum):
 
-weewx.accum.ADD_FUNCTIONS.update({'add_lightning': LightningAccum.add_lightning_distance_value}) 
+    def __init__(self, timespan, unit_system=None):
+        super().__init__(timespan, unit_system=unit_system)
+    
+    def add_json(self, record, obs_type, add_hilo, weight):
+        
+        val = record[obs_type]
+
+        # If the type has not been seen before, initialize it
+        self._init_type(obs_type)
+
+        self[obs_type].addJsonToArray(val)
+
+    def extract_json_array(self, record, obs_type):
+        
+        record[obs_type] = self[obs_type].json_array
+        
+
+weewx.accum.ACCUM_TYPES.update({'json':JSONStats})
+weewx.accum.ADD_FUNCTIONS.update({'add_lightning': LightningAccum.add_lightning_distance_value})
+weewx.accum.ADD_FUNCTIONS.update({'add_json': JSONAccum.add_json})
+weewx.accum.EXTRACT_FUNCTIONS.update({'json_array': JSONAccum.extract_json_array})
 
 if __name__ == '__main__':
     import optparse
