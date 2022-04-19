@@ -748,7 +748,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             archive_record = archivePeriod.getRecord()
             if archive_record:
                 # return record from last processed accumulator
-                if len(lightningPerTimestampArray) > 1:
+                if len(lightningPerTimestampArray) > 0:
                     archive_record['lightningPerTimestamp'] = json.dumps(lightningPerTimestampArray)
                 yield archive_record
 
