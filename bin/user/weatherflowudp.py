@@ -389,37 +389,47 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
         results = list()
         timestamps = None
         for device in devices:
-            observation_count = None
-            retry = 0
-            while not observation_count or observation_count < min_expected_observation_count:
-                if retry > max_retry_count:
-                    raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
-                                                  % (observation_count, min_expected_observation_count, device))
-                if retry > 0:
-                    time.sleep(20) # execute retry after a delay
-                logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
-                response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
-                if (response.status_code != 200):
-                    raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
-                jsonResponse = response.json()
-                if (jsonResponse['obs']):
-                    observation_count = len(jsonResponse['obs'])
-                else:
-                    observation_count = 0
-                retry += 1
-            if lastTimestamp == None and jsonResponse['obs'] != None:
-                lastTimestamp = sorted(jsonResponse['obs'], key = lambda i: i[0], reverse = True)[0][0]
-
-            result = dict()
-            result['device_id'] = jsonResponse['device_id']
-            result['type'] = jsonResponse['type']
-            observations = sorted((jsonResponse['obs'] or list()), key = lambda x : x[0])
-            newTimestamps = [observation[0] for observation in observations]
-            timestamps = timestamps or (timestamps or list()) + list(set(newTimestamps) - set(timestamps or list()))
-            result['obs'] = dict(zip(newTimestamps, observations))
-            len(result)
-
-            results.append(result)
+            try:
+                observation_count = None
+                retry = 0
+                while observation_count is None or observation_count < min_expected_observation_count:
+                    if retry > max_retry_count:
+                        log.warning("Did get %s instead of expected %s observations from API for device %s" 
+                                                      % (observation_count, min_expected_observation_count, device))
+                        raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
+                                                      % (observation_count, min_expected_observation_count, device))
+                    if retry > 0:
+                        time.sleep(20) # execute retry after a delay
+                    logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
+                    response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
+                    if (response.status_code != 200):
+                        raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
+                    jsonResponse = response.json()
+                    if (jsonResponse['obs']):
+                        observation_count = len(jsonResponse['obs'])
+                    else:
+                        observation_count = 0
+                    retry += 1
+                if lastTimestamp == None and jsonResponse['obs'] != None:
+                    lastTimestamp = sorted(jsonResponse['obs'], key = lambda i: i[0], reverse = True)[0][0]
+    
+                result = dict()
+                result['device_id'] = jsonResponse['device_id']
+                result['type'] = jsonResponse['type']
+                observations = sorted((jsonResponse['obs'] or list()), key = lambda x : x[0])
+                newTimestamps = [observation[0] for observation in observations]
+                timestamps = timestamps or (timestamps or list()) + list(set(newTimestamps) - set(timestamps or list()))
+                result['obs'] = dict(zip(newTimestamps, observations))
+                len(result)
+    
+                results.append(result)
+            except IncompleteDataException:
+                log.warning("REST data is not complete.")
+        
+        if (len(results) == 0):
+            log.warning("Did not get required observations from API")
+            raise IncompleteDataException("Did not get required observations from API")
+        
         combinedResult = dict()
         combinedResult['device_ids'] = [result['device_id'] for result in results]
         combinedResult['types'] = [result['type'] for result in results]
@@ -453,6 +463,7 @@ def parseRestPacket(pkt, device_id_dict, calculator):
         pos = 0
         for observation in observations:
             if observation == None:
+                pos += 1
                 continue
             packet['time_epoch'] = observation[0]
             for key, value in zip(fields_list[pos], observation):
@@ -882,6 +893,7 @@ class WeatherflowCloudDataService(StdService):
         self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
         self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', self._driver._archive_interval - 1))
         self._max_retry_count = int(service_dict.get('max_retry_count', 3))
+        self._trust_sensor_lightning_detections = bool(service_dict.get('trust_local_lightning_detections', True))
         
         # Bind to any new archive record events:
         log.info("Init WeatherflowCloudDataService")
@@ -914,16 +926,25 @@ class WeatherflowCloudDataService(StdService):
                             self._engine.dispatchEvent(weewx.Event(WeatherflowEnhancement,
                                                                    record=weatherflow_record,
                                                                    origin='hardware'))
+                            enhance_lightning = True
+                            if ('lightning_strike_count' in weatherflow_record and weatherflow_record['lightning_strike_count'] == 0
+                                and self._trust_sensor_lightning_detections):
+                                enhance_lightning = False
+                            
                             for enhanced_reading in self._enhanced_readings:
                                 if enhanced_reading in weatherflow_record:
-                                    if enhanced_reading in weatherflow_record and event.record[enhanced_reading] != weatherflow_record[enhanced_reading]:
-                                        if not (enhanced_reading == 'lightning_strike_count' and weatherflow_record[enhanced_reading] == 0):
+                                    if (enhanced_reading in weatherflow_record and enhanced_reading in event.record
+                                        and event.record[enhanced_reading] != weatherflow_record[enhanced_reading]):
+                                        # do not overwrite sensor reading of lightning events when API has not detected any lightning
+                                        if (enhanced_reading not in ['lightning_strike_count','lightning_distance'] or enhance_lightning):
                                             log.info('Got different value from REST API for %s (%s instead of %s). Will use REST API value for archiving.' % (enhanced_reading, weatherflow_record[enhanced_reading], event.record[enhanced_reading]))
-                                            event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
+                                            if weatherflow_record[enhanced_reading] is None:
+                                                del event.record[enhanced_reading]
+                                            else:
+                                                event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
                                 else:
                                     log.info('Did not get value for %s from Weatherflow REST API' % enhanced_reading)
-                            if ('lightningPerTimestamp' in weatherflow_record and
-                                ('lightning_strike_count' in self._enhanced_readings or 'lightning_distance' in self._enhanced_readings)):
+                            if enhance_lightning:
                                 event.record['lightningPerTimestamp'] = weatherflow_record['lightningPerTimestamp']
                             break
                         else:
@@ -931,7 +952,7 @@ class WeatherflowCloudDataService(StdService):
             
             except Timeout:
                 log.warning('Could not enhance values with Weatherflow REST data due to an API timeout')
-            except IncompleteDataException:
+            except IncompleteDataException as e:
                 log.info('Could not enhance values with Weatherflow REST data because Weatherflow data was not complete')
             except:
                 log.error('Could not enhance values with Weatherflow REST data')
