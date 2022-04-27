@@ -944,7 +944,7 @@ class WeatherflowCloudDataService(StdService):
                                                 event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
                                 else:
                                     log.info('Did not get value for %s from Weatherflow REST API' % enhanced_reading)
-                            if enhance_lightning:
+                            if enhance_lightning and 'lightningPerTimestamp' in weatherflow_record:
                                 event.record['lightningPerTimestamp'] = weatherflow_record['lightningPerTimestamp']
                             break
                         else:
