@@ -649,6 +649,9 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._archive_interval = int(std_dict.get('archive_interval', 60))
         self._loopHiLo = tobool(std_dict.get('loop_hilo', True))
         self._archive_delay = int(std_dict.get('archive_delay', 15))
+        self._toleratedUDPDelay = self._archive_delay - 3
+        if self._toleratedUDPDelay < 0:
+            self._toleratedUDPDelay = 0
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
         self._calculator = BatteryModeCalculator()
@@ -673,9 +676,10 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             if 'time_epoch' in m2 and m2['time_epoch'] > 1000:
                 m3 = mapToWeewxPacket(m2, self._sensor_map, False, 1, self._generateRainRate)
                 if (m3 and len(m3) > 2):
-                    if (m2['time_epoch'] + 5) > last_loop_timestamp:
+                    if (m2['time_epoch'] + self._toleratedUDPDelay) > last_loop_timestamp:
                         logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                        last_loop_timestamp = m2['time_epoch']
+                        if m2['time_epoch'] > last_loop_timestamp:
+                            last_loop_timestamp = m2['time_epoch']
                         yield m3
                     else:
                         #Delayed packets can cause wrong behavior e.g. for accumulator timespan
