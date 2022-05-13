@@ -399,7 +399,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                         raise IncompleteDataException("Did get %s instead of expected %s observations from API for device %s" 
                                                       % (observation_count, min_expected_observation_count, device))
                     if retry > 0:
-                        time.sleep(20) # execute retry after a delay
+                        time.sleep(30) # execute retry after a delay
                     logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
                     response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
                     if (response.status_code != 200):
@@ -420,7 +420,6 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                 newTimestamps = [observation[0] for observation in observations]
                 timestamps = timestamps or (timestamps or list()) + list(set(newTimestamps) - set(timestamps or list()))
                 result['obs'] = dict(zip(newTimestamps, observations))
-                len(result)
     
                 results.append(result)
             except IncompleteDataException:
@@ -653,6 +652,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         if self._sensor_map == None:
             self._sensor_map = getSensorMap(self._devices, self._device_id_dict)
         self._calculator = BatteryModeCalculator()
+        self._lightningPerTimestampArray = [];
 
         loginf('sensor map is %s' % self._sensor_map)
         loginf('*** Sensor names per packet type')
@@ -664,6 +664,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         return getHardwareName(self._devices)
 
     def genLoopPackets(self):
+        last_loop_timestamp = 0
         for udp_packet in self.gen_udp_packets():
             m2 = parseUDPPacket(udp_packet, self._calculator)
             # ignore packets immediately after the start of the hub when the hub
@@ -672,8 +673,13 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
             if 'time_epoch' in m2 and m2['time_epoch'] > 1000:
                 m3 = mapToWeewxPacket(m2, self._sensor_map, False, 1, self._generateRainRate)
                 if (m3 and len(m3) > 2):
-                    logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
-                    yield m3
+                    if (m2['time_epoch'] + 5) > last_loop_timestamp:
+                        logdbg('Import from UDP: %s' % datetime.utcfromtimestamp(m3['dateTime']))
+                        last_loop_timestamp = m2['time_epoch']
+                        yield m3
+                    else:
+                        #Delayed packets can cause wrong behavior e.g. for accumulator timespan
+                        logwrn("Ignoring delayed packet with dateTime %s and keys %s" % (m2['time_epoch'], m3.keys()))
             else:
                 if 'time_epoch' in m2:
                     logwrn("Ignoring packet with obviously uninitialized dateTime %s" % m2['time_epoch'])
@@ -761,6 +767,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 # return record from last processed accumulator
                 if len(lightningPerTimestampArray) > 0:
                     archive_record['lightningPerTimestamp'] = json.dumps(lightningPerTimestampArray)
+                    lightningPerTimestampArray = [];
                 yield archive_record
 
     def genStartupRecords(self, since_ts):
@@ -892,7 +899,7 @@ class WeatherflowCloudDataService(StdService):
         self._weatherflow_data_delay = float(service_dict.get('weatherflow_data_delay', 40))
         self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
         self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', self._driver._archive_interval - 1))
-        self._max_retry_count = int(service_dict.get('max_retry_count', 3))
+        self._max_retry_count = int(service_dict.get('max_retry_count', 5))
         self._trust_sensor_lightning_detections = bool(service_dict.get('trust_local_lightning_detections', True))
         
         # Bind to any new archive record events:
@@ -944,12 +951,16 @@ class WeatherflowCloudDataService(StdService):
                                                 event.record[enhanced_reading] = weatherflow_record[enhanced_reading]
                                 else:
                                     log.info('Did not get value for %s from Weatherflow REST API' % enhanced_reading)
-                            if enhance_lightning and 'lightningPerTimestamp' in weatherflow_record:
+                            if (enhance_lightning and 'lightningPerTimestamp' in weatherflow_record
+                                and weatherflow_record['lightningPerTimestamp'] is not None):
                                 event.record['lightningPerTimestamp'] = weatherflow_record['lightningPerTimestamp']
                             break
                         else:
                             log.info('Could not enhance values with Weatherflow REST data because Weatherflow result timestamp does not match')
-            
+                
+                if 'lightningPerTimestamp' in weatherflow_record and not isinstance(weatherflow_record['lightningPerTimestamp'], str):
+                    log.warning("lightningPerTimestamp is not a string - would cause an ERROR")
+                    del event.record['lightningPerTimestamp']
             except Timeout:
                 log.warning('Could not enhance values with Weatherflow REST data due to an API timeout')
             except IncompleteDataException as e:
@@ -979,17 +990,6 @@ class JSONStats(object):
     
     def addJsonToArray(self, val):
         self.json_array.append(val)
-
-class LightningAccum(Accum):
-
-    def __init__(self, timespan, unit_system=None):
-        super().__init__(timespan, unit_system=unit_system)
-    
-    def add_lightning_distance_value(self, record, obs_type, add_hilo, weight):
-        lightning_distance_weight = weight
-        if obs_type and record and 'lightning_strike_count' in record and str(obs_type) == 'lightning_distance':
-            lightning_distance_weight = lightning_distance_weight * record['lightning_strike_count']
-        self.add_value(record, obs_type, add_hilo, lightning_distance_weight)
         
 class JSONAccum(Accum):
 
@@ -1007,8 +1007,19 @@ class JSONAccum(Accum):
 
     def extract_json_array(self, record, obs_type):
         
-        record[obs_type] = self[obs_type].json_array
+        if len(self[obs_type].json_array) > 0:
+            record[obs_type] = json.dumps(self[obs_type].json_array)
         
+class LightningAccum(Accum):
+
+    def __init__(self, timespan, unit_system=None):
+        super().__init__(timespan, unit_system=unit_system)
+    
+    def add_lightning_distance_value(self, record, obs_type, add_hilo, weight):
+        lightning_distance_weight = weight
+        if obs_type and record and 'lightning_strike_count' in record and str(obs_type) == 'lightning_distance':
+            lightning_distance_weight = lightning_distance_weight * record['lightning_strike_count']
+        self.add_value(record, obs_type, add_hilo, lightning_distance_weight)
 
 weewx.accum.ACCUM_TYPES.update({'json':JSONStats})
 weewx.accum.ADD_FUNCTIONS.update({'add_lightning': LightningAccum.add_lightning_distance_value})
