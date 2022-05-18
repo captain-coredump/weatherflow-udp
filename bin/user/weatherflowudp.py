@@ -898,6 +898,7 @@ class WeatherflowCloudDataService(StdService):
         
         service_dict = config_dict['WeatherflowCloudDataService']
         self._driver = WeatherFlowUDPDriver(config_dict)
+        self._devices = service_dict.get('devices',self._driver._devices)
         self._enhanced_readings = service_dict.get('enhanced_readings', None)
         self._request_timeout = float(service_dict.get('request_timeout', 10))
         self._weatherflow_data_delay = float(service_dict.get('weatherflow_data_delay', 40))
@@ -931,7 +932,7 @@ class WeatherflowCloudDataService(StdService):
                     return
 
                 expected_observation_count = int(self._driver._archive_interval / 60)
-                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._driver._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
+                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
                     for weatherflow_record in self._driver.convertREST2weewx(packet):
                         if weatherflow_record['dateTime'] == event.record['dateTime']:
                             self._engine.dispatchEvent(weewx.Event(WeatherflowEnhancement,
