@@ -786,7 +786,57 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         else:
             loginf('Skipped fetching from REST API')
             
+class WeatherFlowUDPArchive(weewx.engine.StdArchive):
+    
+    def __init__(self, engine, config_dict):
+        super(WeatherFlowUDPArchive, self).__init__(engine, config_dict)
+        service_dict = config_dict['WeatherflowCloudDataService']
+        self._devices = getDevices(service_dict.get('devices', list(engine.console._device_dict.keys())), engine.console._device_dict.keys(), engine.console._token)
+        self._last_weatherflow_api_check_ts = 0
+        
+    def check_loop(self, event):
+        """Called after any loop packets have been processed. This is the opportunity
+        to break the main loop by throwing an exception."""
+        # Is this the end of the archive period? If so, dispatch an
+        # END_ARCHIVE_PERIOD event
+        if event.packet['dateTime'] > self.end_archive_period_ts:
+            self.engine.dispatchEvent(weewx.Event(weewx.END_ARCHIVE_PERIOD,
+                                                  packet=event.packet,
+                                                  end=self.end_archive_period_ts))
+            start_archive_period_ts = weeutil.weeutil.startOfInterval(event.packet['dateTime'],
+                                                                      self.archive_interval)
+            self.end_archive_period_ts = start_archive_period_ts + self.archive_interval
+            self.end_archive_max_delay_ts = self.end_archive_period_ts - 20
+            
 
+        # Has the end of the archive delay period ended? If so, break the loop.
+        if event.packet['dateTime'] >= self.end_archive_delay_ts:
+            if event.packet['dateTime'] >= self.end_archive_max_delay_ts:
+                log.info("BreakLoop based on timestamp")
+                raise weewx.engine.BreakLoop
+            
+            # check if weatherflow data is available
+            if self._last_weatherflow_api_check_ts < (time.time() - 20):
+                data_available_count = 0
+                self._last_weatherflow_api_check_ts = time.time()
+                for device in self._devices:
+                    try:
+                        last_minutely_ts_of_previous_period = self.end_archive_period_ts - self.archive_interval - 60
+                        response = requests.get(getObservationsUrl(last_minutely_ts_of_previous_period, last_minutely_ts_of_previous_period + 60, self.engine.console._token, self.engine.console._device_dict[device]), timeout=1)
+                        if (response.status_code != 200):
+                            log.warning('Could not check for Weatherflow REST data. Status code was %s' % response.status_code)
+                        else:
+                            jsonResponse = response.json()
+                            if (jsonResponse['obs']):
+                                data_available_count += 1
+                    except:
+                        log.warning('Could not check for Weatherflow REST data')
+                        log.error(traceback.format_exc())
+                if data_available_count == len(self._devices):
+                    log.info("BreakLoop based on available API data")
+                    raise weewx.engine.BreakLoop
+                else:
+                    log.info("No not break loop because of missing API data")
 
 class ArchivePeriod:
     def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
@@ -897,14 +947,14 @@ class WeatherflowCloudDataService(StdService):
         super(WeatherflowCloudDataService, self).__init__(engine, config_dict)
         
         service_dict = config_dict['WeatherflowCloudDataService']
-        self._driver = WeatherFlowUDPDriver(config_dict)
-        self._devices = service_dict.get('devices',self._driver._devices)
+        self._driver = engine.console
+        self._devices = getDevices(service_dict.get('devices', list(self._driver._device_dict.keys())), self._driver._device_dict.keys(), self._driver._token)
         self._enhanced_readings = service_dict.get('enhanced_readings', None)
         self._request_timeout = float(service_dict.get('request_timeout', 10))
         self._weatherflow_data_delay = float(service_dict.get('weatherflow_data_delay', 40))
         self._maximum_sleep_time = float(service_dict.get('maximum_sleep_time', 40))
         self._max_loop_archive_delay = float(service_dict.get('max_loop_archive_delay', self._driver._archive_interval - 1))
-        self._max_retry_count = int(service_dict.get('max_retry_count', 5))
+        self._max_retry_count = int(service_dict.get('max_retry_count', 0))
         self._trust_sensor_lightning_detections = bool(service_dict.get('trust_local_lightning_detections', True))
         
         # Bind to any new archive record events:
@@ -912,7 +962,7 @@ class WeatherflowCloudDataService(StdService):
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
 
         self._engine = engine
-    
+
     def new_archive_record(self, event):
         """Gets called on a new archive record event."""
 
