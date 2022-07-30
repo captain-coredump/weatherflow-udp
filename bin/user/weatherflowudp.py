@@ -367,7 +367,19 @@ def getObservationsUrl(start, end, token, device_id):
 def getStationDevices(token, request_timeout):
     if not token:
         return dict(), dict()
-    response = requests.get(getStationsUrl(token), timeout=request_timeout)
+    response = None
+    retry = 0
+    while response is None:
+        try:
+            response = requests.get(getStationsUrl(token), timeout=request_timeout)
+        except requests.exceptions.ConnectionError as connectionError:
+            log.warning("Could not connect to REST service. Retry in 10 seconds")
+            retry += 1
+            if retry > 6:
+                raise connectionError
+            log.error(traceback.format_exc())
+            time.sleep(10)
+    
     if (response.status_code != 200):
         raise DriverException("Could not fetch station information from WeatherFlow webservice: {}".format(response))
     stations = response.json()["stations"]
@@ -401,7 +413,19 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                     if retry > 0:
                         time.sleep(30) # execute retry after a delay
                     logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
-                    response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
+                    
+                    response = None
+                    while response is None:
+                        try:
+                            response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
+                        except requests.exceptions.ConnectionError as connectionError:
+                            log.warning("Could not connect to REST service. Retry in 10 seconds")
+                            retry += 1
+                            if retry > max_retry_count:
+                                raise connectionError
+                            log.error(traceback.format_exc())
+                            time.sleep(10)
+
                     if (response.status_code != 200):
                         raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
                     jsonResponse = response.json()
@@ -836,7 +860,7 @@ class WeatherFlowUDPArchive(weewx.engine.StdArchive):
                     log.info("BreakLoop based on available API data")
                     raise weewx.engine.BreakLoop
                 else:
-                    log.info("No not break loop because of missing API data")
+                    log.info("Do not break loop because of missing API data")
 
 class ArchivePeriod:
     def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
