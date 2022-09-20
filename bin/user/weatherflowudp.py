@@ -901,6 +901,8 @@ class BatteryModeCalculator:
         self._list = list()
 
     def addVoltage(self, value):
+        if not value:
+            return
         self._list.append(value)
         if len(self._list) > 10:
             self._list.pop(0)
@@ -909,7 +911,7 @@ class BatteryModeCalculator:
         if len(self._list) == 10:
             firstValue = sum(self._list[0:5])
             secondValue = sum(self._list[5:10])
-            return secondValue > firstValue
+            return secondValue - firstValue > 0.05
         else:
             return False
 
