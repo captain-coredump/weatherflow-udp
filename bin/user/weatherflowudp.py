@@ -26,6 +26,7 @@ stanza.  For example, on an Air/Sky setup:
     udp_port = 50222
     udp_timeout = 90
     share_socket = True
+    generateRainRate = True
 
     [[sensor_map]]
         outTemp = air_temperature.AR-00004424.obs_air
@@ -123,6 +124,49 @@ Options:
     will have problems sharing the socket.  Feel free to set it to
     True if you have other apps running on your weewx host listening
     for WF UDP packets.
+
+You have the possibility to enhance the loop data by using weatherflow API data instead for selected readings
+ba configuring the following service:
+
+[WeatherflowCloudDataService]
+    enhanced_readings = lightning_strike_count, lightning_distance, rain, rainRate
+    request_timeout = 10
+    
+You will have to add this service in your service configuration:
+
+[Engine]
+    [[Services]]
+        data_services = user.weatherflowudp.WeatherflowCloudDataService
+
+For best results with additional data from weatherflow REST API please also use some additional services:
+[Engine]
+    [[Services]]
+        data_services = user.weatherflowudp.WeatherflowCloudDataService
+        process_services = user.weatherflowudp.WeatherflowConvert, user.weatherflowudp.WeatherflowCalibrate, user.weatherflowudp.WeatherflowQC, weewx.wxservices.StdWXCalculate
+        archive_services = user.weatherflowudp.WeatherFlowUDPArchive
+    
+    user.weatherflowudp.WeatherflowCloudDataService: Can be used to use the values from the weatherflow API instead of
+        the aggregated values from the loop. This can increase the data quality especially for lightning an rain values.
+    user.weatherflowudp.WeatherflowConvert/WeatherflowCalibrate/WeatherflowQC: Are required to perform conversions,
+        calibrations and QC on values collected from the weatherflow API
+    user.weatherflowudp.WeatherFlowUDPArchive: Initializes the archive process after the required data is available
+        at weatherflows API. Usually this takes less than a minute but sometimes even longer.
+
+If you want to save lightning data, please add the following accumulator configurations:
+
+[Accumulator]
+    [[lightning_strike_count]]
+        extractor = sum
+    [[lightning_distance]]
+        adder=add_lightning
+
+    #Optional fields:
+
+    #If you add this field to your database as TEXT field, the driver will add the lightning events in a json structure
+    [[lightningPerTimestamp]]
+        accumulator=json
+        adder=add_json
+        extractor=json_array
 
 Finally, let me add a thank you to Matthew Wall for the
 sensor map naming logic that I borrowed from his weewx-SDR
