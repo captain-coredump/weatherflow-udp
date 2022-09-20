@@ -1,7 +1,7 @@
 # weatherflow-udp
 Copyright 2017-2020 Arthur Emerson, <vreihen@yahoo.com><br>
 Copyright 2021 Jan-Jaap van der Geer, <jjvdgeer@yahoo.com><br>
-Copyright 2022 edi-x
+Copyright 2022 edi-x<br>
 Distributed under terms of the GPLv3
 
 This is a driver for weewx, that captures data from the WeatherFlow bridge via the bridge's UDP broadcasts on the local subnet. In addition, it can fetch data from the WeatherFlow REST API when first starting, so that missing data since the previous run of weewx will be fetched as well.
