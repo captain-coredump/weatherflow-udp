@@ -12,6 +12,7 @@ import weewx
 from user import weatherflowudp
 from weewx import engine
 from weewx.engine import StdArchive
+from user.weatherflowudp import getStationDevices
 #import user.weatherflowudp.WeatherFlowUDPDriver
 
 
@@ -117,7 +118,7 @@ class Test(unittest.TestCase):
 
         pass      
         
-    def testRESTData(self):
+    def ztestSimulatedRESTData(self):
         
         result = dict()
         result['device_ids'] = [self.device_id]
@@ -136,6 +137,11 @@ class Test(unittest.TestCase):
         except EndLoop:
             pass
         
+    def testRESTData(self):
+        for packet in weatherflowudp.readDataFromWF(1650805200, 1650805800, self.token, self.devices, self.device_dict, (24 * 60 * 60), 20, 1, 0):
+            for archive_record in self.driver.convertREST2weewx(packet):
+                    print(packet)
+            
 class TestArchive(StdArchive):
     """Service that archives LOOP and archive data in the SQL databases."""
     
@@ -168,6 +174,9 @@ class TestConsole(object):
     def __init__(self, test_instance):
         try:
             self.archive_interval = int(test_instance.config_dict['StdArchive']['archive_interval'])
+            self._request_timeout = 30
+            self._token = test_instance.config_dict['WeatherFlowUDP']['token']
+            self._device_id_dict, self._device_dict = getStationDevices(self._token, self._request_timeout)
         except KeyError:
             self.archive_interval = 300
         self.test_instance = test_instance    

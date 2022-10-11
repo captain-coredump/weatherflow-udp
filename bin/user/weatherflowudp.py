@@ -273,6 +273,8 @@ fields['evt_precip'] = ('time_epoch',)
 fields['evt_strike'] = ('time_epoch', 'distance', 'energy')
 fields['obs_st'] = ('time_epoch', 'wind_lull', 'wind_avg', 'wind_gust', 'wind_direction', 'wind_sample_interval', 'station_pressure', 'air_temperature', 'relative_humidity', 'illuminance', 'uv', 'solar_radiation', 'rain_accumulated', 'precipitation_type', 'lightning_strike_avg_distance', 'lightning_strike_count', 'battery', 'report_interval')
 
+weatherflowArchiveAccum = None
+
 def loader(config_dict, engine):
     return WeatherFlowUDPDriver(config_dict)
 
@@ -791,6 +793,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
     def convertREST2weewx(self, packet):
         archivePeriod = None
+        global weatherflowArchiveAccum
         lightningPerTimestampArray = [];
         for observation in parseRestPacket(packet, self._device_id_dict, self._calculator):
             m3 = mapToWeewxPacket(observation, self._sensor_map, True, int((self._archive_interval + 59) / 60), self._generateRainRate)
@@ -832,6 +835,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 if archive_record:
                     logdbg('Archiving accumulated data from REST %s' % archivePeriod._start_archive_period_ts)
                     observationCount = 1
+                    weatherflowArchiveAccum = archivePeriod._old_accumulator
                     yield archive_record
         if archivePeriod:
             archive_record = archivePeriod.getRecord()
@@ -840,6 +844,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 if len(lightningPerTimestampArray) > 0:
                     archive_record['lightningPerTimestamp'] = json.dumps(lightningPerTimestampArray)
                     lightningPerTimestampArray = [];
+                weatherflowArchiveAccum = archivePeriod._accumulator
                 yield archive_record
 
     def genStartupRecords(self, since_ts):
@@ -861,6 +866,7 @@ class WeatherFlowUDPArchive(weewx.engine.StdArchive):
         service_dict = config_dict['WeatherflowCloudDataService']
         self._devices = getDevices(service_dict.get('devices', list(engine.console._device_dict.keys())), engine.console._device_dict.keys(), engine.console._token)
         self._last_weatherflow_api_check_ts = 0
+        self._enhanced_readings = service_dict.get('enhanced_readings', None)
         
     def check_loop(self, event):
         """Called after any loop packets have been processed. This is the opportunity
@@ -905,6 +911,17 @@ class WeatherFlowUDPArchive(weewx.engine.StdArchive):
                     raise weewx.engine.BreakLoop
                 else:
                     log.info("Do not break loop because of missing API data")
+
+    def new_archive_record(self, event):
+        global weatherflowArchiveAccum
+        if (self._enhanced_readings and weatherflowArchiveAccum and self.old_accumulator):
+            for enhanced_reading in self._enhanced_readings:
+                if enhanced_reading in weatherflowArchiveAccum:
+                    self.old_accumulator.set_stats(enhanced_reading,weatherflowArchiveAccum[enhanced_reading].getStatsTuple())            
+        
+        weatherflowArchiveAccum = None
+        super(WeatherFlowUDPArchive, self).new_archive_record(event)
+        
 
 class ArchivePeriod:
     def __init__(self, start_archive_period_ts, archive_interval, archive_delay):
