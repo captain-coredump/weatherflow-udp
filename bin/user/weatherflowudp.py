@@ -206,8 +206,8 @@ from datetime import datetime
 import calendar
 from configobj import ConfigObj
 
-# Default settings and constants...
-DRIVER_VERSION = "1.13"
+# Default settings...
+DRIVER_VERSION = "1.14"
 HARDWARE_NAME = "WeatherFlow"
 DRIVER_NAME = 'WeatherFlowUDP'
 
@@ -416,7 +416,7 @@ def getObservationsUrl(start, end, token, device_id):
 
 def getStationDevices(token, request_timeout):
     if not token:
-        return dict(), dict()
+        return dict(), dict(), dict()
     response = None
     retry = 0
     while response is None:
@@ -435,14 +435,16 @@ def getStationDevices(token, request_timeout):
     stations = response.json()["stations"]
     device_id_dict = dict()
     device_dict = dict()
+    device_type_dict = dict()
     for station in stations:
         for device in station["devices"]:
             if 'serial_number' in device:
                 device_id_dict.update({device["device_id"]:device["serial_number"]})
                 device_dict.update({device["serial_number"]:device["device_id"]})
-    return device_id_dict, device_dict
+                device_type_dict.update({device["serial_number"]:'device_type' in device and device['device_type'] or None})
+    return device_id_dict, device_dict, device_type_dict
 
-def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request_timeout, min_expected_observation_count, max_retry_count):
+def readDataFromWF(start, stop, token, devices, device_dict, device_type_dict, batch_size, request_timeout, min_expected_observation_count, max_retry_count):
     isFinished = False
     while not isFinished: # end > calendar.timegm(datetime.utcnow().utctimetuple()):
         end = start + batch_size - 1
@@ -452,6 +454,8 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
         timestamps = None
         for device in devices:
             try:
+                if device_type_dict[device] in ['HB', None]:
+                    continue
                 observation_count = None
                 retry = 0
                 while observation_count is None or observation_count < min_expected_observation_count:
@@ -465,9 +469,10 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                     logdbg('Reading for {} from {} to {}'.format(device, datetime.utcfromtimestamp(start), datetime.utcfromtimestamp(lastTimestamp or end)))
                     
                     response = None
+                    url = getObservationsUrl(start, lastTimestamp or end, token, device_dict[device])
                     while response is None:
                         try:
-                            response = requests.get(getObservationsUrl(start, lastTimestamp or end, token, device_dict[device]), timeout=request_timeout)
+                            response = requests.get(url, timeout=request_timeout)
                         except requests.exceptions.ConnectionError as connectionError:
                             log.warning("Could not connect to REST service. Retry in 10 seconds")
                             retry += 1
@@ -477,7 +482,7 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
                             time.sleep(10)
 
                     if (response.status_code != 200):
-                        raise DriverException("Could not fetch records from WeatherFlow webservice: {}".format(response))
+                        raise DriverException("Could not fetch records from WeatherFlow webservice: {} Url: {}".format(response, url))
                     jsonResponse = response.json()
                     if (jsonResponse['obs']):
                         observation_count = len(jsonResponse['obs'])
@@ -501,8 +506,8 @@ def readDataFromWF(start, stop, token, devices, device_dict, batch_size, request
         
         if (len(results) == 0):
             log.warning("Did not get required observations from API")
-            raise IncompleteDataException("Did not get required observations from API")
-        
+            raise IncompleteDataException("Did not get required observations from API")        
+
         combinedResult = dict()
         combinedResult['device_ids'] = [result['device_id'] for result in results]
         combinedResult['types'] = [result['type'] for result in results]
@@ -715,7 +720,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         self._share_socket = tobool(stn_dict.get('share_socket', False))
         self._sensor_map = stn_dict.get('sensor_map', None)
         self._token = stn_dict.get('token', '')
-        self._device_id_dict, self._device_dict = getStationDevices(self._token, self._request_timeout)
+        self._device_id_dict, self._device_dict, self._device_type_dict = getStationDevices(self._token, self._request_timeout)
         self._batch_size = int(stn_dict.get('batch_size', 24 * 60 * 60))
         self._devices = getDevices(stn_dict.get('devices', list(self._device_dict.keys())), self._device_dict.keys(), self._token)
         self._rest_enabled = tobool(stn_dict.get('rest_enabled', True))
@@ -857,7 +862,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
 
         if self._token != "" and self._rest_enabled:
             loginf('Reading from {}'.format(datetime.utcfromtimestamp(since_ts)))
-            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._batch_size, self._request_timeout, 0, 0):
+            for packet in readDataFromWF(since_ts + 1, None, self._token, self._devices, self._device_dict, self._device_type_dict, self._batch_size, self._request_timeout, 0, 0):
                 for archive_record in self.convertREST2weewx(packet):
                     yield archive_record
         else:
@@ -1073,7 +1078,7 @@ class WeatherflowCloudDataService(StdService):
                     return
 
                 expected_observation_count = int(self._driver._archive_interval / 60)
-                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._devices, self._driver._device_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
+                for packet in readDataFromWF(event.record['dateTime'] - self._driver._archive_interval + 1, event.record['dateTime'] -1, self._driver._token, self._devices, self._driver._device_dict, self._driver._device_type_dict, self._driver._archive_interval, self._request_timeout, expected_observation_count, self._max_retry_count):
                     for weatherflow_record in self._driver.convertREST2weewx(packet):
                         if weatherflow_record['dateTime'] == event.record['dateTime']:
                             self._engine.dispatchEvent(weewx.Event(WeatherflowEnhancement,
@@ -1223,7 +1228,7 @@ if __name__ == '__main__':
             print('Please provide an API token with the --token=TOKEN option')
             exit(1)
         try:
-            device_id_dict, device_dict = getStationDevices(options.token, 30)
+            device_id_dict, device_dict, _ = getStationDevices(options.token, 30)
             devicesList = [s.strip() for s in options.devices.split(',')] if ',' in options.devices else options.devices if len(options.devices) > 0 else list(device_dict.keys())
             devices = getDevices(devicesList, device_dict.keys(), options.token, True)
             sensor_map = getSensorMap(devices, device_id_dict, True)

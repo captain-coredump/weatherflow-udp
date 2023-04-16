@@ -1,14 +1,22 @@
+1.14 2023-01-03 by Jan-Jaap van der Geer, jjvdgeer@yahoo.com
+* Fix a problem where requesting observations from a hub caused
+  the WeatherFlow REST to return a 500-error, by skipping hubs
+  and unknown devices when requesting observations for devices.
+
+
 1.13 2021-02-22 by Jan-Jaap van der Geer, jjvdgeer@yahoo.com
 * Do not use REST interface for LOOP data
 * Handle not setting --devices when using --create-sensor-map
 * Don't enforce archive_interval
 * Cosmetic change to printing of the sensor-map under python2
 
+
 1.12 2021-02-03 by Jan-Jaap van der Geer, jjvdgeer@yahoo.com
 * Added support for fetching Archive records from the REST interface
 * Made the sensor map optional, fetching the info from the REST interface
 * Let the hardware name function return the actual type of devices
 * Don't fill the log file with messages "Unknown packet type: 'light_debug'".
+
 
 1.11 2020-07-16 by Tom Keffer, tkeffer@gmail.com
 * Ported to Python 2 (as well as Python 3).
