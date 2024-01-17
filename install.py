@@ -18,7 +18,7 @@ except ImportError:
 
 #-------- extension info -----------
 
-VERSION      = "1.11"
+VERSION      = "1.10.1"
 NAME         = 'weatherflowudp'
 DESCRIPTION  = 'Capture data from WeatherFlow Bridge via UDP broadcast packets',
 AUTHOR       = "Arthur Emerson"
@@ -48,6 +48,15 @@ class WeatherFlowUDPInstaller(ExtensionInstaller):
 extension_config = """
 
 [WeatherFlowUDP]
+
+    driver = user.weatherflowudp
+    log_raw_packets = False
+    udp_address = <broadcast>
+    # udp_address = 0.0.0.0
+    # udp_address = 255.255.255.255
+    udp_port = 50222
+    udp_timeout = 90
+    share_socket = False
 
     #
     # IMPORTANT - please edit in 'your' sensor ID below
