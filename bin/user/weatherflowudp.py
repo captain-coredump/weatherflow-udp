@@ -285,6 +285,7 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
         for pkt_type in list(fields.keys()):             # Python 3
             loginf('packet %s: %s' % (pkt_type,fields[pkt_type]))
 
+    @property
     def hardware_name(self):
         return HARDWARE_NAME
 
