@@ -18,7 +18,7 @@ except ImportError:
 
 #-------- extension info -----------
 
-VERSION      = "1.10.1"
+VERSION      = "1.10.2"
 NAME         = 'weatherflowudp'
 DESCRIPTION  = 'Capture data from WeatherFlow Bridge via UDP broadcast packets',
 AUTHOR       = "Arthur Emerson"
