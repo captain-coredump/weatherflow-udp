@@ -20,9 +20,9 @@ except ImportError:
 
 VERSION      = "1.10.2"
 NAME         = 'weatherflowudp'
-DESCRIPTION  = 'Capture data from WeatherFlow Bridge via UDP broadcast packets',
+DESCRIPTION  = 'Capture data from WeatherFlow Bridge via UDP broadcast packets'
 AUTHOR       = "Arthur Emerson"
-AUTHOR_EMAIL = "vreihen@yahoo.com",
+AUTHOR_EMAIL = "vreihen@yahoo.com"
 
 #-------- main loader -----------
 
