@@ -14,7 +14,9 @@ Installation should be as simple as grabbing a .ZIP download of this
 entire project from the GitHub web interface, and then running this
 command:
 
-wee_extension --install weatherflow-udp-master.zip
+weectl extension install weatherflow-udp-master.zip # v5 weewx
+
+wee_extension --install weatherflow-udp-master.zip # earlier weewx
 
 Worst case, a manual install is simple enough.  At least on my Raspberry Pi,
 copy weatherflowudp.py from bin/user to /usr/share/weewx/user/weatherflowudp.py,

@@ -1,3 +1,11 @@
+1.10.2 2024-02-18 by Vince Skahan, vinceskahan@gmail.com
+* add @property to driver so weewx v5 station registration works
+* reflect v5 extension installation command via 'weectl'
+
+1.10.1 2024-01-17 by Vince Skahan, vinceskahan@gmail.com
+* install example sensor_map and full weewx.conf stanza for new installations only
+* Note: you still have to edit the sensor_map to use 'your' sensor ID rather than the example ID
+
 1.10 2020-05-09 by Arthur Emerson, vreihen@yahoo.com
 * IMPORTANT!  This release is set up for WeeWX 4.x and Python 3.  If you want it to run on Python 2, swap the comments in bin/user/weatheflowudp.py on lines 200/201, 214/215, and 284/285.  (I'll get around to making the detection of Python version automatic in the next update.)
 * Added official Tempest UDP support now that API has been officially published.
