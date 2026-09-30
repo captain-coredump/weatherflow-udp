@@ -307,14 +307,10 @@ class WeatherFlowUDPDriver(weewx.drivers.AbstractDevice):
                 logerr('Socket timeout waiting for incoming UDP packet!')
             if timeouterr == 0:
                 try:
-                    m0 = str(m[0],'utf-8').replace(",null",",None")    # Python 3
+                    m1 = json.loads(m[0])
                 except:
-                    m0 = m[0].replace(",null",",None")                 # Python 2
-                m1=''
-                try:
-                    m1=eval(m0)
-                except SyntaxError:
-                    logerr('Packet parse error: %s' % m0)
+                    logerr('Packet parse error: %s' % m[0])
+                    continue
                 if self._log_raw_packets:
                     loginf('raw packet: %s' % m1)
                 m2=parseUDPPacket(m1)
